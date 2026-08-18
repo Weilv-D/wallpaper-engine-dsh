@@ -1,6 +1,6 @@
 {
   "name": "wallpaper-engine-dsh",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Wallpaper Engine Video/Web wallpapers as the DSH web GUI background — discovery, sandboxed rendering, rotation lists, liquid-glass tuning.",
   "type": "module",
   "main": "lib/index.js",
