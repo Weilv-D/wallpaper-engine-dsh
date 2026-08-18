@@ -641,6 +641,33 @@ setTimeout(async () => {
     timers.filter((t) => !t.cleared && !t.fired && t.ms < 1000).length === 0,
     String(timers.filter((t) => !t.cleared && !t.fired && t.ms < 1000).length));
 
+  // ── Re-apply after dispose (plugin update WITHOUT page reload) ─────────
+  // The module is NOT re-evaluated on update: the old fiber's cleanup set
+  // `disposed = true`, and the new fiber's loadInventory must still commit.
+  // Regression guard for the 1.0.0 blank-picker bug.
+  const cleanups2 = [];
+  const pickerRenders2 = [];
+  const ctx2 = {
+    slots: {
+      inject: (key, cb) => cb(),
+      register: (opts, render) => { pickerRenders2.push(render); },
+    },
+    effect(fn) { const cleanup = fn(); if (typeof cleanup === 'function') cleanups2.push(cleanup); },
+  };
+  let reapplied = false;
+  try { exportsObj.apply(ctx2); reapplied = true; } catch (e) { /* asserted below */ }
+  check('re-apply after dispose does not throw', reapplied);
+  await new Promise((r) => setTimeout(r, 40));
+  const tree2 = pickerRenders2.length ? pickerRenders2[0]() : null;
+  check('re-applied fiber loads the inventory (no eternal scanning)',
+    Boolean(tree2) && !JSON.stringify(tree2).includes('正在扫描'),
+    pickerRenders2.length ? 'rendered' : 'no render registered');
+  check('re-applied fiber re-mounts the wallpaper',
+    documentMock.querySelectorAll('.webg-layer').length >= 1);
+  for (const cleanup of cleanups2) {
+    try { cleanup(); } catch { /* second dispose asserted no-throw above pattern */ }
+  }
+
   console.log(failures === 0 ? '\nALL CLIENT CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`);
   process.exit(failures === 0 ? 0 : 1);
 }, 60);
