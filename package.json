@@ -1,0 +1,81 @@
+{
+  "name": "wallpaper-engine-dsh",
+  "version": "0.1.0",
+  "description": "Wallpaper Engine Video/Web wallpapers as the DSH web GUI background — discovery, sandboxed rendering, rotation lists, liquid-glass tuning.",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Weilv-D/wallpaper-engine-dsh.git"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "wallpaper",
+    "wallpaper-engine",
+    "background",
+    "theme"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/types/client.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/core.js",
+    "lib/index.js",
+    "lib/client.js",
+    "lib/types/index.d.ts",
+    "lib/types/client.d.ts",
+    "cordis.patch.yml",
+    "README.md",
+    "README.zh.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime"
+      ],
+      "platform": "web",
+      "immediately": true
+    }
+  },
+  "license": "MIT",
+  "scripts": {
+    "build": "node scripts/build-client.mjs",
+    "verify": "node scripts/verify-client.mjs",
+    "test": "node --test test/core.test.mjs",
+    "prepare": "node scripts/prepare.mjs",
+    "prepublishOnly": "npm run test && npm run build && npm run verify"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-client-runtime": ">=0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-slots": ">=0.1.0-rc.6",
+    "@deepseek-ai/dsh-host-webserver": ">=0.1.0-rc.6",
+    "react": "^18.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-host-webserver": {
+      "optional": true
+    }
+  }
+}

@@ -1,0 +1,18 @@
+# wallpaper-engine-dsh bundle patch.
+#
+# Applied over the dsh-web-app layer. This bundle contributes ONE host row
+# (the plugin that discovers the local Wallpaper Engine install and serves an
+# inventory + media over same-origin HTTP) and relies on its `dsh.client`
+# manifest (package.json) to load the browser half that renders the wallpaper
+# behind the DSH GUI and contributes the settings UI.
+#
+# A patch replaces a targeted row's whole `config`, so only additive `insert`
+# rows appear here — no shipped row is ever overridden.
+
+- insert:
+    # Host half. Hard-depends on `webServer` (declared via `inject` in
+    # lib/index.js) so the Loader orders it after the HTTP server mounts;
+    # this bundle is web-only (its dsh.client declares platform "web"), so it
+    # is simply not added to headless/TUI profiles.
+    - id: we-background
+      name: 'wallpaper-engine-dsh'
