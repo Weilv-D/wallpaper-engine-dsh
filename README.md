@@ -95,3 +95,13 @@ npm run verify     # boot the emitted bundle in a vm sandbox and assert behaviou
 ```
 
 `lib/core.js` and `lib/index.js` are plain ESM — no build step. `lib/client.js` is a **compiled artifact**; edit `src/client.js` and rebuild. `npm run prepublishOnly` runs the full gate: test → build → verify.
+
+## Releasing
+
+Publishing runs in GitHub Actions (`.github/workflows/publish.yml`) through npm **Trusted Publishing (OIDC)** — no npm token is stored anywhere:
+
+1. Bump `version` in `package.json` and push.
+2. Create a GitHub Release whose tag is `v<version>` (must match `package.json`).
+3. The workflow runs the full gate, asserts tag ↔ version, and publishes with `--provenance`.
+
+One-time npm setup: package → **Settings → Trusted Publisher → GitHub Actions** (repo `Weilv-D/wallpaper-engine-dsh`, workflow `publish.yml`). The very first version must be published manually once (see README.zh.md §发布 for details) before trusted publishing can be linked.

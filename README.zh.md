@@ -95,3 +95,15 @@ npm run verify     # 在 vm 沙箱中启动产物并断言行为
 ```
 
 `lib/core.js` 与 `lib/index.js` 是纯 ESM,无构建步骤。`lib/client.js` 是**编译产物**:请编辑 `src/client.js` 后重新构建。`npm run prepublishOnly` 会跑完整门禁:test → build → verify。
+
+## 发布
+
+发布由 GitHub Actions(`.github/workflows/publish.yml`)通过 npm **Trusted Publishing(OIDC)**完成——任何地方都不存 npm token:
+
+1. 提升 `package.json` 的 `version` 并推送。
+2. 创建 tag 为 `v<版本号>` 的 GitHub Release(必须与 `package.json` 一致)。
+3. 工作流自动跑完整门禁、校验 tag ↔ 版本号,并带 `--provenance` 溯源发布。
+
+一次性配置(npm 网页端):包页面 → **Settings → Trusted Publisher → GitHub Actions**(仓库 `Weilv-D/wallpaper-engine-dsh`,workflow 填 `publish.yml`)。
+
+**首发引导**:Trusted Publisher 需要包已存在才能绑定,所以**第一个版本需手动发一次**——在你自己的终端里运行 `npm publish`(新版 npm 会拉起浏览器做人体验证),或在 npm 网页端创建带 publish 权限的 granular token 存入仓库密钥 `NPM_TOKEN` 并取消 `publish.yml` 末尾 env 块的注释。首发成功后绑定 Trusted Publisher,之后一切全自动。

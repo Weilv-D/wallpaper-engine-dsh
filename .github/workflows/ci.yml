@@ -1,0 +1,27 @@
+# CI gate: unit tests + client bundle build + runtime smoke verification.
+# Zero-dependency package — no npm install needed (lib/ artifacts are committed).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+      - run: npm run build
+      - run: npm run verify
+      # The build must be reproducible: rebuilding from src/ must not dirty
+      # the committed lib/client.js artifact.
+      - name: assert committed artifact is current
+        run: git diff --exit-code lib/client.js
