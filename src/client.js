@@ -1283,12 +1283,13 @@ const CSS = `
 
   /* ── Picker chrome (token-driven, theme-aware) ── */
   /* padding-top lifts the first row off the settings-section divider so the
-     search/language row breathes; gap keeps every row evenly spaced. */
+     search/language row breathes; gap keeps every row evenly spaced.
+     Type scale follows the shell: 14px body → 13px controls → 12px hints. */
   .webg-picker { display: flex; flex-direction: column; gap: 12px; padding-top: 10px; }
   .webg-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  .webg-hint { font-size: 0.8em; opacity: 0.7; color: var(--dsw-alias-label-tertiary, inherit); }
+  .webg-hint { font-size: 12px; opacity: 0.7; color: var(--dsw-alias-label-tertiary, inherit); }
   .webg-error {
-    font-size: 0.85em;
+    font-size: 13px;
     color: var(--dsw-alias-state-error-primary, #d44);
   }
   .webg-label { min-width: 28px; }
@@ -1301,21 +1302,26 @@ const CSS = `
     border: 1px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.35));
     background: var(--dsw-alias-bg-layer-1, rgba(128, 128, 128, 0.12));
     color: var(--dsw-alias-label-primary, inherit);
-    font-size: 0.85em;
+    font-size: 12px;
     transition: background-color 120ms ease, border-color 120ms ease;
   }
+  /* Ghost-button hover rides the shell's own interactive-hover token. */
   .webg-btn:hover:not(:disabled) {
-    background: var(--dsw-alias-bg-layer-2, rgba(128, 128, 128, 0.2));
+    background: var(--dsw-alias-interactive-bg-hover,
+      var(--dsw-alias-bg-layer-2, rgba(128, 128, 128, 0.2)));
     border-color: var(--dsw-alias-border-l1, rgba(128, 128, 128, 0.5));
   }
   .webg-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  /* brand-primary is monochrome (near-black light / near-white dark), so
+     the label must use its inverse token — never a hardcoded white. */
   .webg-btn--primary {
-    background: var(--dsw-alias-brand-primary, #3964fe);
+    background: var(--dsw-alias-brand-primary, rgb(15, 17, 21));
     border-color: transparent;
-    color: #fff;
+    color: var(--dsw-alias-brand-primary-invert, rgb(249, 250, 251));
   }
   .webg-btn--primary:hover:not(:disabled) {
-    background: var(--dsw-alias-brand-primary-hover, #4f74ff);
+    background: var(--dsw-alias-brand-primary, rgb(15, 17, 21));
+    opacity: 0.85;
   }
 
   .webg-select, .webg-text {
@@ -1324,7 +1330,7 @@ const CSS = `
     border: 1px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.35));
     background: var(--dsw-alias-bg-layer-1, rgba(128, 128, 128, 0.12));
     color: var(--dsw-alias-label-primary, inherit);
-    font-size: 0.85em;
+    font-size: 13px;
   }
   .webg-text { flex: 1; min-width: 0; }
   .webg-search { max-width: 320px; }
@@ -1333,11 +1339,11 @@ const CSS = `
   .webg-rotation-interval { margin-left: auto; }
   .webg-toggle {
     display: inline-flex; align-items: center; gap: 6px;
-    accent-color: var(--dsw-alias-brand-primary, #3964fe);
-    font-size: 0.85em; cursor: pointer;
+    accent-color: var(--dsw-alias-brand-primary, rgb(15, 17, 21));
+    font-size: 13px; cursor: pointer;
   }
 
-  .webg-slider { flex: 1; accent-color: var(--dsw-alias-brand-primary, #3964fe); }
+  .webg-slider { flex: 1; accent-color: var(--dsw-alias-brand-primary, rgb(15, 17, 21)); }
   .webg-slider-row { display: flex; align-items: center; gap: 8px; }
 
   .webg-monitor-row { gap: 14px; }
@@ -1363,23 +1369,23 @@ const CSS = `
   }
   .webg-card img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .webg-card--selected {
-    outline: 2px solid var(--dsw-alias-brand-primary, #3964fe);
+    outline: 2px solid var(--dsw-alias-brand-primary, rgb(15, 17, 21));
     outline-offset: -2px;
   }
   .webg-card-close {
     position: absolute; inset: 0;
     display: flex; align-items: center; justify-content: center;
-    font-size: 0.8em; color: var(--dsw-alias-label-secondary, #888);
+    font-size: 12px; color: var(--dsw-alias-label-secondary, #888);
   }
   .webg-card-type {
     position: absolute; top: 4px; right: 4px;
     padding: 1px 6px; border-radius: 4px;
-    font-size: 0.65em; line-height: 1.5;
+    font-size: 10px; line-height: 1.5;
     color: #fff; background: rgba(0, 0, 0, 0.5);
   }
   .webg-card-title {
     position: absolute; left: 0; right: 0; bottom: 0; padding: 3px 6px;
-    font-size: 0.7em; line-height: 1.2; color: #fff;
+    font-size: 11px; line-height: 1.2; color: #fff;
     background: linear-gradient(transparent, rgba(0, 0, 0, 0.7));
     text-overflow: ellipsis; white-space: nowrap; overflow: hidden;
     text-align: left;
@@ -1387,7 +1393,7 @@ const CSS = `
   .webg-card-placeholder {
     position: absolute; inset: 0;
     display: flex; align-items: center; justify-content: center;
-    font-size: 0.72em; opacity: 0.55;
+    font-size: 11px; opacity: 0.55;
   }
 
   /* Rotation group editor. */
@@ -1413,12 +1419,14 @@ const CSS = `
   .webg-editor-card:hover { transform: translateY(-1px); }
   .webg-editor-card img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .webg-editor-card--checked {
-    outline: 2px solid var(--dsw-alias-brand-primary, #3964fe);
+    outline: 2px solid var(--dsw-alias-brand-primary, rgb(15, 17, 21));
     outline-offset: -2px;
   }
   .webg-editor-check {
     position: absolute; top: 4px; left: 4px; width: 18px; height: 18px;
-    border-radius: 4px; background: var(--dsw-alias-brand-primary, #3964fe); color: #fff;
+    border-radius: 4px;
+    background: var(--dsw-alias-brand-primary, rgb(15, 17, 21));
+    color: var(--dsw-alias-brand-primary-invert, rgb(249, 250, 251));
     font-size: 12px; line-height: 18px; text-align: center;
   }
 `;
