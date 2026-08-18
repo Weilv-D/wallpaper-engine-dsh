@@ -742,8 +742,6 @@ function applyEffects() {
   s.setProperty("--webg-saturate", String(1.15 + selection.blur * 0.028));
   s.setProperty("--webg-glass-brightness", "1.04");
   s.setProperty("--webg-wallpaper-blur", selection.wallpaperBlur + "px");
-  // Scaling compensates the transparent fringe CSS blur reveals at edges.
-  s.setProperty("--webg-wallpaper-scale", (1 + selection.wallpaperBlur * 0.006).toFixed(4));
   // Canvas fit: object-fit/position for video and still wallpapers (iframes
   // ignore object-fit — web wallpapers always fill their layer).
   s.setProperty("--webg-fit", selection.fit);
@@ -766,7 +764,6 @@ function clearEffects() {
   s.removeProperty("--webg-saturate");
   s.removeProperty("--webg-glass-brightness");
   s.removeProperty("--webg-wallpaper-blur");
-  s.removeProperty("--webg-wallpaper-scale");
   s.removeProperty("--webg-fit");
   s.removeProperty("--webg-position");
   const scrim = document.getElementById(SCRIM_ID);
@@ -775,7 +772,10 @@ function clearEffects() {
 
 // ── Settings picker ─────────────────────────────────────────────────────────
 function SliderRow(label, min, max, step, value, onInput, suffix) {
-  return React.createElement("div", { className: "webg-row webg-slider-row" },
+  // A Fragment of three cells — the surrounding .webg-effects grid keeps
+  // every slider starting and ending at the same x regardless of how wide
+  // the label text is (壁纸模糊 vs 暗化 vs Wallpaper blur…).
+  return React.createElement(React.Fragment, null,
     React.createElement("span", { className: "webg-hint webg-label" }, label),
     React.createElement("input", {
       className: "webg-slider", type: "range",
@@ -1164,10 +1164,12 @@ function WallpaperPicker() {
           React.createElement("option", { key: POSITIONS[i], value: POSITIONS[i] }, label),
         )),
       ),
-      SliderRow(t.wallpaperBlur, 0, 60, 1, sel.wallpaperBlur, onWallpaperBlur, sel.wallpaperBlur + "px"),
-      SliderRow(t.scrim, 0, 90, 5, Math.round(sel.scrim * 100), onScrim, Math.round(sel.scrim * 100) + "%"),
-      SliderRow(t.border, 0, 90, 5, Math.round(sel.border * 100), onBorder, Math.round(sel.border * 100) + "%"),
-      SliderRow(t.glass, 0, 40, 1, sel.blur, onBlur, sel.blur + "px"),
+      React.createElement("div", { className: "webg-effects" },
+        SliderRow(t.wallpaperBlur, 0, 60, 1, sel.wallpaperBlur, onWallpaperBlur, sel.wallpaperBlur + "px"),
+        SliderRow(t.scrim, 0, 90, 5, Math.round(sel.scrim * 100), onScrim, Math.round(sel.scrim * 100) + "%"),
+        SliderRow(t.border, 0, 90, 5, Math.round(sel.border * 100), onBorder, Math.round(sel.border * 100) + "%"),
+        SliderRow(t.glass, 0, 40, 1, sel.blur, onBlur, sel.blur + "px"),
+      ),
     ),
     // ── Resource monitor ──
     sel.id && React.createElement("div", { className: "webg-row webg-monitor-row" },
@@ -1218,14 +1220,21 @@ const CSS = `
   }
   .webg-layer--enter { opacity: 0; }
   .webg-layer--leave { opacity: 0; }
+  /* Overscan: the media is LARGER than the layer by two blur radii on every
+     side, so the transparent fringe CSS blur produces is clipped by the
+     layer's overflow:hidden instead of compensated with a content-warping
+     scale. A slight saturate keeps blurred colours from washing out. */
   .webg-layer .webg-media {
-    width: 100%; height: 100%; object-fit: var(--webg-fit, cover);
+    position: absolute;
+    inset: calc(-2 * var(--webg-wallpaper-blur, 0px));
+    width: calc(100% + 4 * var(--webg-wallpaper-blur, 0px));
+    height: calc(100% + 4 * var(--webg-wallpaper-blur, 0px));
+    max-width: none; max-height: none;
+    object-fit: var(--webg-fit, cover);
     object-position: var(--webg-position, center);
     display: block;
     background: transparent; border: 0;
-    filter: blur(var(--webg-wallpaper-blur, 0px));
-    transform: scale(var(--webg-wallpaper-scale, 1));
-    transform-origin: center;
+    filter: blur(var(--webg-wallpaper-blur, 0px)) saturate(1.06);
   }
 
   /* Scrim: above the wallpaper (-1 > -2), below the UI. */
@@ -1292,7 +1301,7 @@ const CSS = `
     font-size: 13px;
     color: var(--dsw-alias-state-error-primary, #d44);
   }
-  .webg-label { min-width: 28px; }
+  .webg-label { white-space: nowrap; }
   .webg-value { min-width: 42px; text-align: right; font-variant-numeric: tabular-nums; }
 
   .webg-btn {
@@ -1343,8 +1352,17 @@ const CSS = `
     font-size: 13px; cursor: pointer;
   }
 
-  .webg-slider { flex: 1; accent-color: var(--dsw-alias-brand-primary, rgb(15, 17, 21)); }
-  .webg-slider-row { display: flex; align-items: center; gap: 8px; }
+  .webg-slider { width: 100%; accent-color: var(--dsw-alias-brand-primary, rgb(15, 17, 21)); }
+  /* Effects grid: one shared grid across all slider rows, so every slider
+     starts and ends at the same x no matter how wide its label is. */
+  .webg-effects {
+    display: grid;
+    grid-template-columns: max-content 1fr 3.2em;
+    gap: 8px 10px;
+    align-items: center;
+  }
+  .webg-effects .webg-label { white-space: nowrap; }
+  .webg-effects .webg-value { text-align: right; }
 
   .webg-monitor-row { gap: 14px; }
   .webg-fps { font-variant-numeric: tabular-nums; }
