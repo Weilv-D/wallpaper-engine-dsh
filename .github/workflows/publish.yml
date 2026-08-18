@@ -73,6 +73,16 @@ jobs:
         # env:
         #   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      # Deprecate everything older than this release: installs that pinned a
+      # stale version print an upgrade warning at resolve time. best-effort —
+      # if trusted publishing declines the command, the latest dist-tag still
+      # routes all unpinned installs to the current version.
+      - name: deprecate older versions
+        run: |
+          V=$(node -p "require('./package.json').version")
+          npm deprecate "wallpaper-engine-dsh@<$V" "Upgrade to >=$V (npm i -g @deepseek-ai/dsh && dsh plugin --profile web update wallpaper-engine-dsh) — earlier builds are broken."
+        continue-on-error: true
+
       # On tag pushes, create the matching GitHub Release with generated
       # notes. (On manual-release runs the release already exists.)
       - name: create GitHub release
