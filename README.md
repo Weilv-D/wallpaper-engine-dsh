@@ -10,7 +10,7 @@ A DSH bundle that turns your local **Wallpaper Engine** library into the live ba
 
 **Legibility on any wallpaper.** Text stays readable by construction, not by luck. The veil always opposes the text colour — black in the dark theme, white in the light theme — so neither a pitch-black nor a pure-white wallpaper can swallow the UI. On top of that, a Smart veil samples the wallpaper's brightness every few seconds and automatically strengthens the veil when a scene drifts too bright (or too dark) for the current theme; it also strengthens the border contrast and the glass frosting on the same evidence. Dropdowns, menus, and dialogs sit on DSH's opaque surfaces and are never affected.
 
-**Manual framing.** Pick a base layout — Cover, Contain, Stretch, or Original — then frame the shot yourself. **Adjust** opens the live wallpaper fullscreen: drag to pan, scroll to zoom (0.25×–4×), Esc or Done to finish. The framing persists per selection, and **Reset crop** restores the default in one click.
+**Manual framing.** Pick a base layout — Cover, Contain, Stretch, or Original — then frame the shot yourself. **Adjust** opens the live wallpaper fullscreen: scroll to zoom in (up to 4×), drag to pan within the zoomed framing — the crop is clamped so the image always fills the screen with no exposed edges. Esc or Done finishes, the framing persists per selection, and **Reset crop** restores the default in one click.
 
 **Four live sliders.** Wallpaper blur, Scrim, Borders, and Glass — every change lands instantly and persists. Wallpaper blur uses clipped overscan, so blurring never warps or shifts the image; a whisper of dither noise keeps smooth gradients band-free; and at zero blur the media bypasses the filter pipeline entirely for bit-exact pixels.
 

@@ -406,19 +406,32 @@ setTimeout(async () => {
       check('Esc keydown handler registered on document',
         Boolean(documentMock._listeners.keydown));
       if (overlayHandlers && overlayHandlers.pointerdown) {
-        // Pan: 60px right (clientWidth 0 → media-box maths still ≥0 offsets).
+        // Gap-free invariant FIRST: at zoom 1 a drag cannot move the media
+        // (there is no headroom) — offsets must stay pinned at 0.
         overlayHandlers.pointerdown({ clientX: 500, clientY: 300, target: overlay });
-        overlayHandlers.pointermove({ clientX: 560, clientY: 300 });
+        overlayHandlers.pointermove({ clientX: 700, clientY: 300 });
         overlayHandlers.pointerup({});
-        check('drag pans the crop (offsets persisted)',
-          JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']).offsetX > 0);
-        // Wheel zoom: deltaY<0 zooms in, clamped 0.25..4, persisted.
-        overlayHandlers.wheel({ deltaY: -240, preventDefault() {} });
+        check('drag at zoom 1 stays pinned (no edge gaps)',
+          JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']).offsetX === 0);
+        // Zoom IN creates headroom; wheel-out below 1 clamps back to 1.
+        overlayHandlers.wheel({ deltaY: -400, preventDefault() {} });
         const zoomed = JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']).zoom;
         check('wheel-up zooms in and persists', zoomed > 1, String(zoomed));
         overlayHandlers.wheel({ deltaY: 100000, preventDefault() {} });
-        check('extreme wheel-out clamps at 0.25',
-          JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']).zoom === 0.25);
+        const floored = JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']);
+        check('extreme wheel-out clamps at 1 (crop never shrinks below cover)',
+          floored.zoom === 1 && floored.offsetX === 0 && floored.offsetY === 0,
+          JSON.stringify([floored.zoom, floored.offsetX]));
+        // Now a real crop: zoom in, pan right, offsets land within headroom.
+        overlayHandlers.wheel({ deltaY: -400, preventDefault() {} });
+        overlayHandlers.pointerdown({ clientX: 500, clientY: 300, target: overlay });
+        overlayHandlers.pointermove({ clientX: 560, clientY: 300 });
+        overlayHandlers.pointerup({});
+        const cropped = JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']);
+        const pan = (cropped.zoom - 1) * 50;
+        check('drag pans within the zoom headroom and persists',
+          cropped.offsetX > 0 && cropped.offsetX <= pan,
+          JSON.stringify([cropped.zoom, cropped.offsetX]));
         // Esc exits exactly like Done.
         if (documentMock._listeners.keydown) {
           documentMock._listeners.keydown({ key: 'Escape' });

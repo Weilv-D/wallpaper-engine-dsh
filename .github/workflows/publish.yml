@@ -75,17 +75,20 @@ jobs:
 
       # Deprecate everything older than this release: installs that pinned a
       # stale version print an upgrade warning at resolve time. Trusted
-      # publishing (OIDC) does NOT cover `npm deprecate` — this step needs the
-      # NPM_TOKEN secret (granular token with "Deprecate packages" right).
-      # Without it the step is skipped: the latest dist-tag alone still routes
-      # all unpinned installs to the current version.
+      # publishing (OIDC) does NOT cover `npm deprecate` — this step needs
+      # the NPM_TOKEN secret (granular token with "Deprecate packages"
+      # right). Without the secret the step exits 0 immediately; the latest
+      # dist-tag alone still routes all unpinned installs to the new version.
       - name: deprecate older versions
-        if: ${{ secrets.NPM_TOKEN != '' }}
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "NPM_TOKEN not set — skipping deprecation (latest dist-tag still wins)."
+            exit 0
+          fi
           V=$(node -p "require('./package.json').version")
           npm deprecate "wallpaper-engine-dsh@<$V" "Upgrade to >=$V (dsh plugin --profile web update wallpaper-engine-dsh) — earlier builds are broken."
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         continue-on-error: true
 
       # On tag pushes, create the matching GitHub Release with generated
