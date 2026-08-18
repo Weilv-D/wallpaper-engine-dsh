@@ -122,6 +122,8 @@ const STRINGS = {
     confirmDelete: (name) => "删除轮播列表「" + name + "」?",
     defaultGroupName: (n) => "轮播列表 " + n,
     defaultGroupBase: "轮播列表",
+    iframeTitle: "Wallpaper Engine 网页壁纸",
+    decodeFallback: "媒体无法解码,已改用预览图",
   },
   en: {
     settingsLabel: "Wallpaper Engine",
@@ -198,6 +200,8 @@ const STRINGS = {
     confirmDelete: (name) => "Delete rotation list \"" + name + "\"?",
     defaultGroupName: (n) => "Rotation list " + n,
     defaultGroupBase: "Rotation list",
+    iframeTitle: "Wallpaper Engine web wallpaper",
+    decodeFallback: "Media cannot be decoded here — showing the preview image",
   },
 };
 
@@ -280,7 +284,7 @@ function readPersisted() {
       wallpaperBlur: clampNum(o.wallpaperBlur, 0, 60, DEFAULTS.wallpaperBlur),
       rotationEnabled: o.rotationEnabled === true,
       rotationGroupId: typeof o.rotationGroupId === "string" ? o.rotationGroupId : "",
-      rotationGroups: readRotationGroups(o.rotationGroups, STRINGS.zh.defaultGroupBase),
+      rotationGroups: readRotationGroups(o.rotationGroups, STRINGS[browserLang() || "zh"].defaultGroupBase),
       rotationSeeded: o.rotationSeeded === true,
       pauseOnHidden: o.pauseOnHidden !== false,
       pauseOnBattery: o.pauseOnBattery !== false,
@@ -513,9 +517,14 @@ function startEditGroup(id) {
 }
 
 function startCreateGroup() {
+  // Default names must stay unique even after deletions: take the smallest
+  // free index instead of count+1.
+  const taken = new Set(selection.rotationGroups.map((g) => g.name));
+  let n = 1;
+  while (taken.has(S().defaultGroupName(n))) n++;
   selection.editing = {
     id: nextGroupId(),
-    name: S().defaultGroupName(selection.rotationGroups.length + 1),
+    name: S().defaultGroupName(n),
     interval: DEFAULTS.rotationInterval,
     order: "sequence",
     wallpaperIds: [],
@@ -533,7 +542,7 @@ function saveEditingGroup() {
     interval: clampNum(draft.interval, 1, 1440, DEFAULTS.rotationInterval),
     order: draft.order === "random" ? "random" : "sequence",
     wallpaperIds: Array.isArray(draft.wallpaperIds)
-      ? draft.wallpaperIds.filter((x) => typeof x === "string" && x)
+      ? [...new Set(draft.wallpaperIds.filter((x) => typeof x === "string" && x))]
       : [],
   };
   if (idx >= 0) selection.rotationGroups[idx] = cleaned;
@@ -542,8 +551,13 @@ function saveEditingGroup() {
   selection.editing = null;
   if (selection.rotationEnabled && !rotationCandidates().some((w) => w.id === selection.id)) {
     const first = rotationCandidates()[0];
-    applySelection(first ? first.id : "");
-    return;
+    if (first) {
+      applySelection(first.id);
+      return;
+    }
+    // Saved list has nothing usable — keep the current wallpaper and simply
+    // stop rotation instead of clearing the screen.
+    selection.rotationEnabled = false;
   }
   persistSelection();
   syncRotationTimer();
@@ -576,7 +590,7 @@ function deleteGroup(id) {
 function importPlaylistIntoDraft(playlist) {
   if (!selection.editing || !playlist || !Array.isArray(playlist.wallpaperIds)) return;
   const usable = new Set(selectableInventory().map((w) => w.id));
-  selection.editing.wallpaperIds = playlist.wallpaperIds.filter((id) => usable.has(id));
+  selection.editing.wallpaperIds = [...new Set(playlist.wallpaperIds.filter((id) => usable.has(id)))];
   emit();
 }
 
@@ -586,10 +600,12 @@ function applySelection(id) {
   const w = selection.id
     ? selection.inventory.wallpapers.find((x) => x.id === selection.id)
     : null;
-  if (isPlayable(w)) {
+  if (isPlayable(w) && !demotedToPreview.has(selection.id)) {
     selection.url = w.media;
     selection.type = w.type; // "video" | "web"
-  } else if (w && isStatic(w)) {
+  } else if (w && w.preview) {
+    // Static path: scene/application wallpapers, and playable wallpapers
+    // demoted after repeated media failures (undecodable container…).
     selection.url = w.preview;
     selection.type = "image";
   } else {
@@ -612,11 +628,27 @@ function effectivePlaying() {
   return selection.playing && selection.autoPauseReasons.size === 0;
 }
 
+// Latest known battery state (null until getBattery resolves). Kept at module
+// scope so re-enabling the toggle can re-evaluate immediately instead of
+// waiting for the next battery event.
+let batteryState = null;
+function applyBatteryPause() {
+  if (!batteryState || !selection.pauseOnBattery) return;
+  setAutoPause("battery",
+    !batteryState.charging && batteryState.level <= BATTERY_SAVER_LEVEL);
+}
+
 // ── Behind-body layer: wallpaper + scrim, with crossfade ────────────────────
 // Set by a media error handler to force a remount with fresh URLs; cleared
 // once the remount happens.
 let forceRemount = false;
 let lastMediaRecoveryAt = 0;
+// Media failure bookkeeping: the first error for a wallpaper may just be a
+// stale token (fixed by a refresh+remount); a SECOND error for the same id
+// means the bytes themselves are unusable (e.g. an mkv/avi Chromium cannot
+// decode) — demote it to its preview image instead of looping forever.
+const mediaFailures = new Map(); // wallpaperId → consecutive failure count
+const demotedToPreview = new Set(); // wallpaperIds now rendered as stills
 
 function buildMedia(sel) {
   let media;
@@ -637,7 +669,7 @@ function buildMedia(sel) {
     media.setAttribute("referrerpolicy", "no-referrer");
     media.setAttribute("frameborder", "0");
     media.setAttribute("scrolling", "no");
-    media.setAttribute("title", "Wallpaper Engine web wallpaper");
+    media.setAttribute("title", S().iframeTitle);
     media.className = "webg-media webg-iframe";
   } else {
     // Static wallpaper: the scene/application preview as a still image.
@@ -648,22 +680,45 @@ function buildMedia(sel) {
     media.setAttribute("decoding", "async");
     media.className = "webg-media";
   }
-  // Self-heal: if the media fails to load (e.g. its token died on an
-  // inventory rebuild), refetch fresh URLs and remount — throttled to once
-  // per 10 s so a permanently-broken wallpaper cannot loop.
   media.addEventListener("error", () => {
-    const now = Date.now();
-    if (now - lastMediaRecoveryAt < 10000) return;
-    lastMediaRecoveryAt = now;
-    forceRemount = true;
-    loadInventory(true);
+    const id = sel.id;
+    const count = (mediaFailures.get(id) || 0) + 1;
+    mediaFailures.set(id, count);
+    const w = selection.inventory.wallpapers.find((x) => x.id === id);
+    if (count === 1) {
+      // Maybe just a dead token: refetch fresh URLs and remount (throttled).
+      const now = Date.now();
+      if (now - lastMediaRecoveryAt < 10000) return;
+      lastMediaRecoveryAt = now;
+      forceRemount = true;
+      loadInventory(true);
+    } else if (w && w.preview && !demotedToPreview.has(id)) {
+      // The media itself is unusable here — fall back to the still preview.
+      demotedToPreview.add(id);
+      applySelection(id);
+    }
   });
   return media;
 }
 
+// Crossfade/clear leave timers: tracked so dispose can cancel them instead of
+// letting them fire on torn-down nodes afterwards.
+const pendingTimers = new Set();
+function schedule(fn, ms) {
+  if (typeof window === "undefined" || typeof window.setTimeout !== "function") {
+    fn();
+    return null;
+  }
+  const token = window.setTimeout(() => {
+    pendingTimers.delete(token);
+    fn();
+  }, ms);
+  pendingTimers.add(token);
+  return token;
+}
+
 function syncLayers() {
   const existing = document.getElementById(LAYER_ID);
-  const hasTimeout = typeof window !== "undefined" && typeof window.setTimeout === "function";
 
   if (selection.url) {
     // Key by wallpaper id, NOT by media URL: inventory rebuilds re-mint
@@ -690,8 +745,7 @@ function syncLayers() {
       if (existing) {
         existing.classList.add("webg-layer--leave");
         const stale = existing;
-        if (hasTimeout) window.setTimeout(() => stale.remove(), CROSSFADE_MS + 120);
-        else stale.remove();
+        schedule(() => stale.remove(), CROSSFADE_MS + 120);
       }
     }
     const node = document.getElementById(LAYER_ID);
@@ -706,16 +760,14 @@ function syncLayers() {
     existing.removeAttribute("id");
     existing.classList.add("webg-layer--leave");
     const stale = existing;
-    const finish = () => {
+    schedule(() => {
       stale.remove();
       if (!document.getElementById(LAYER_ID)) {
         const s = document.getElementById(SCRIM_ID);
         if (s) s.remove();
         document.body.removeAttribute(ACTIVE_ATTR);
       }
-    };
-    if (hasTimeout) window.setTimeout(finish, CROSSFADE_MS + 120);
-    else finish();
+    }, CROSSFADE_MS + 120);
   }
 
   // Scrim: present while a wallpaper is active. On clear it outlives the
@@ -742,6 +794,9 @@ function applyEffects() {
   s.setProperty("--webg-saturate", String(1.15 + selection.blur * 0.028));
   s.setProperty("--webg-glass-brightness", "1.04");
   s.setProperty("--webg-wallpaper-blur", selection.wallpaperBlur + "px");
+  // Dither-noise strength scales with blur: invisible at 0, ~4% at 60px.
+  s.setProperty("--webg-noise-opacity",
+    selection.wallpaperBlur > 0 ? (0.02 + selection.wallpaperBlur * 0.0004).toFixed(4) : "0");
   // Canvas fit: object-fit/position for video and still wallpapers (iframes
   // ignore object-fit — web wallpapers always fill their layer).
   s.setProperty("--webg-fit", selection.fit);
@@ -764,6 +819,7 @@ function clearEffects() {
   s.removeProperty("--webg-saturate");
   s.removeProperty("--webg-glass-brightness");
   s.removeProperty("--webg-wallpaper-blur");
+  s.removeProperty("--webg-noise-opacity");
   s.removeProperty("--webg-fit");
   s.removeProperty("--webg-position");
   const scrim = document.getElementById(SCRIM_ID);
@@ -775,16 +831,25 @@ function SliderRow(label, min, max, step, value, onInput, suffix) {
   // A Fragment of three cells — the surrounding .webg-effects grid keeps
   // every slider starting and ending at the same x regardless of how wide
   // the label text is (壁纸模糊 vs 暗化 vs Wallpaper blur…).
+  // --webg-p feeds the filled-track gradient; updated inline while dragging
+  // so the fill tracks the thumb even between re-renders.
+  const pct = ((value - min) / (max - min)) * 100;
+  const set = (e) => {
+    const v = Number(e.target.value);
+    if (e.target.style && typeof e.target.style.setProperty === "function") {
+      e.target.style.setProperty("--webg-p", String(((v - min) / (max - min)) * 100));
+    }
+    onInput(v);
+  };
   return React.createElement(React.Fragment, null,
     React.createElement("span", { className: "webg-hint webg-label" }, label),
     React.createElement("input", {
       className: "webg-slider", type: "range",
       min: String(min), max: String(max), step: String(step),
       value: String(value),
-      // onInput fires continuously while dragging (onChange may wait for
-      // release) — that is what makes the visual feedback instant.
-      onInput: (e) => onInput(Number(e.target.value)),
-      onChange: (e) => onInput(Number(e.target.value)),
+      style: { "--webg-p": String(pct) },
+      onInput: set,
+      onChange: set,
     }),
     React.createElement("span", { className: "webg-hint webg-value" }, suffix),
   );
@@ -828,7 +893,13 @@ function WallpaperPicker() {
   const t = S();
   const onTogglePlay = () => { selection.playing = !selection.playing; emit(); };
   const onClear = () => applySelection("");
-  const onRefresh = () => loadInventory(true);
+  const onRefresh = () => {
+    // A manual refresh also retries wallpapers previously demoted to their
+    // preview after decode failures.
+    demotedToPreview.clear();
+    mediaFailures.clear();
+    loadInventory(true);
+  };
   const onLangChange = (e) => {
     selection.lang = e.target.value;
     persistSelection();
@@ -848,15 +919,12 @@ function WallpaperPicker() {
   };
   const onToggleRotation = () => {
     selection.rotationEnabled = !selection.rotationEnabled;
-    if (selection.rotationEnabled) {
-      if (!selection.rotationGroupId) {
-        const usable = firstUsableGroup();
-        if (usable) selection.rotationGroupId = usable.id;
-      }
-      if (!rotationCandidates().some((w) => w.id === selection.id)) {
-        const first = rotationCandidates()[0];
-        if (first) { applySelection(first.id); return; }
-      }
+    // The checkbox is disabled without a usable group, so a group id always
+    // exists here when enabling.
+    if (selection.rotationEnabled &&
+        !rotationCandidates().some((w) => w.id === selection.id)) {
+      const first = rotationCandidates()[0];
+      if (first) { applySelection(first.id); return; }
     }
     persistSelection();
     syncRotationTimer();
@@ -880,13 +948,22 @@ function WallpaperPicker() {
   };
   const onTogglePauseOnHidden = () => {
     selection.pauseOnHidden = !selection.pauseOnHidden;
-    if (!selection.pauseOnHidden) setAutoPause("hidden", false);
+    if (selection.pauseOnHidden) {
+      // Re-enabling while already hidden must re-apply the reason — the
+      // visibilitychange listener only fires on CHANGES.
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        setAutoPause("hidden", true);
+      }
+    } else {
+      setAutoPause("hidden", false);
+    }
     persistSelection();
     emit();
   };
   const onTogglePauseOnBattery = () => {
     selection.pauseOnBattery = !selection.pauseOnBattery;
-    if (!selection.pauseOnBattery) setAutoPause("battery", false);
+    if (selection.pauseOnBattery) applyBatteryPause(); // re-evaluate NOW
+    else setAutoPause("battery", false);
     persistSelection();
     emit();
   };
@@ -1203,6 +1280,7 @@ function WallpaperPicker() {
           : t.statusUsable(usableList.length)) +
         (sel.rotationEnabled ? " · " + t.autoRotating : "") +
         (autoPaused ? " · " + t.autoPaused : "") +
+        (sel.id && demotedToPreview.has(sel.id) ? " · " + t.decodeFallback : "") +
         (sel.inventory.installDir ? " · " + sel.inventory.installDir : "")),
     ),
   );
@@ -1220,21 +1298,35 @@ const CSS = `
   }
   .webg-layer--enter { opacity: 0; }
   .webg-layer--leave { opacity: 0; }
-  /* Overscan: the media is LARGER than the layer by two blur radii on every
+  /* Overscan: the media is LARGER than the layer by one blur radius on every
      side, so the transparent fringe CSS blur produces is clipped by the
      layer's overflow:hidden instead of compensated with a content-warping
-     scale. A slight saturate keeps blurred colours from washing out. */
+     scale. 1× is the fringe a Gaussian kernel actually needs; more would
+     double GPU fill and mis-anchor non-center object-positions. A slight
+     saturate keeps blurred colours from washing out. */
   .webg-layer .webg-media {
     position: absolute;
-    inset: calc(-2 * var(--webg-wallpaper-blur, 0px));
-    width: calc(100% + 4 * var(--webg-wallpaper-blur, 0px));
-    height: calc(100% + 4 * var(--webg-wallpaper-blur, 0px));
+    inset: calc(-1 * var(--webg-wallpaper-blur, 0px));
+    width: calc(100% + 2 * var(--webg-wallpaper-blur, 0px));
+    height: calc(100% + 2 * var(--webg-wallpaper-blur, 0px));
     max-width: none; max-height: none;
     object-fit: var(--webg-fit, cover);
     object-position: var(--webg-position, center);
     display: block;
     background: transparent; border: 0;
-    filter: blur(var(--webg-wallpaper-blur, 0px)) saturate(1.06);
+    filter: blur(var(--webg-wallpaper-blur, 0px)) saturate(1.08);
+  }
+
+  /* Gaussian blur alone shows banding on smooth gradients; a whisper of
+     fractal noise over the layer dithers it away (iOS does the same inside
+     its frosted materials). Opacity rides the blur radius — zero blur, zero
+     noise. */
+  .webg-layer::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    opacity: var(--webg-noise-opacity, 0);
+    background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch"/></filter><rect width="120" height="120" filter="url(%23n)"/></svg>');
+    background-size: 120px 120px;
+    mix-blend-mode: overlay;
   }
 
   /* Scrim: above the wallpaper (-1 > -2), below the UI. */
@@ -1334,13 +1426,33 @@ const CSS = `
   }
 
   .webg-select, .webg-text {
-    padding: 4px 8px;
-    border-radius: 6px;
+    padding: 5px 10px;
+    border-radius: 8px;
     border: 1px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.35));
     background: var(--dsw-alias-bg-layer-1, rgba(128, 128, 128, 0.12));
     color: var(--dsw-alias-label-primary, inherit);
     font-size: 13px;
+    transition: border-color 120ms ease, background-color 120ms ease;
   }
+  /* Custom select: drop the OS chrome, draw our own chevron (mid-gray reads
+     on both light and dark themes), roomier hit area, shell-style focus. */
+  .webg-select {
+    -webkit-appearance: none;
+    appearance: none;
+    padding-right: 28px;
+    cursor: pointer;
+    background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="10" height="6" viewBox="0 0 10 6"><path d="M1 1l4 4 4-4" fill="none" stroke="%23888" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>');
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+  }
+  .webg-select:hover:not(:disabled), .webg-text:hover:not(:disabled) {
+    border-color: var(--dsw-alias-border-l1, rgba(128, 128, 128, 0.5));
+  }
+  .webg-select:focus-visible, .webg-text:focus-visible {
+    outline: 2px solid var(--dsw-alias-brand-primary, rgb(15, 17, 21));
+    outline-offset: 1px;
+  }
+  .webg-select:disabled { opacity: 0.45; cursor: not-allowed; }
   .webg-text { flex: 1; min-width: 0; }
   .webg-search { max-width: 320px; }
   .webg-lang { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
@@ -1352,7 +1464,33 @@ const CSS = `
     font-size: 13px; cursor: pointer;
   }
 
-  .webg-slider { width: 100%; accent-color: var(--dsw-alias-brand-primary, rgb(15, 17, 21)); }
+  /* Custom range slider (Chromium): slim filled track + ringed thumb instead
+     of the default chunky control. --webg-p (0–100) drives the fill. */
+  .webg-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%; height: 22px; margin: 0;
+    background: transparent; cursor: pointer;
+  }
+  .webg-slider::-webkit-slider-runnable-track {
+    height: 4px; border-radius: 2px;
+    background: linear-gradient(to right,
+      var(--dsw-alias-brand-primary, rgb(15, 17, 21)) 0%,
+      var(--dsw-alias-brand-primary, rgb(15, 17, 21)) calc(var(--webg-p, 0) * 1%),
+      var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.35)) calc(var(--webg-p, 0) * 1%));
+  }
+  .webg-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px; height: 14px; border-radius: 50%;
+    margin-top: -5px; /* centers the 14px thumb on the 4px track */
+    background: var(--dsw-alias-brand-primary-invert, rgb(249, 250, 251));
+    border: 2.5px solid var(--dsw-alias-brand-primary, rgb(15, 17, 21));
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
+    transition: transform 120ms ease;
+  }
+  .webg-slider:hover::-webkit-slider-thumb,
+  .webg-slider:focus-visible::-webkit-slider-thumb { transform: scale(1.18); }
+  .webg-slider:focus-visible { outline: none; }
   /* Effects grid: one shared grid across all slider rows, so every slider
      starts and ends at the same x no matter how wide its label is. */
   .webg-effects {
@@ -1498,6 +1636,14 @@ function apply(ctx) {
         unsubLayers();
         unsubEffects();
         clearRotationTimer();
+        // Cancel pending crossfade/clear timers so they never fire on
+        // torn-down nodes after dispose.
+        for (const token of [...pendingTimers]) {
+          if (typeof window !== "undefined" && typeof window.clearTimeout === "function") {
+            window.clearTimeout(token);
+          }
+        }
+        pendingTimers.clear();
         // Remove EVERY layer instance (a crossfade-leaving layer has no id).
         const doomed = document.querySelectorAll(".webg-layer");
         for (const node of [...doomed]) node.remove();
@@ -1531,8 +1677,9 @@ function apply(ctx) {
       let battery = null;
       let cancelled = false;
       const update = () => {
-        if (!battery || !selection.pauseOnBattery) return;
-        setAutoPause("battery", !battery.charging && battery.level <= BATTERY_SAVER_LEVEL);
+        if (!battery) return;
+        batteryState = { charging: battery.charging, level: battery.level };
+        applyBatteryPause();
       };
       navigator.getBattery().then((b) => {
         if (cancelled) return;
@@ -1547,6 +1694,7 @@ function apply(ctx) {
           battery.removeEventListener("chargingchange", update);
           battery.removeEventListener("levelchange", update);
         }
+        batteryState = null;
         setAutoPause("battery", false);
       };
     });

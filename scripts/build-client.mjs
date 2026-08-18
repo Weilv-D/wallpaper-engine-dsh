@@ -29,14 +29,22 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const pkg = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
 const id = pkg.name;
+if (typeof id !== 'string' || !id.trim()) {
+  throw new Error('build-client: package.json "name" must be a non-empty string');
+}
 
 const src = readFileSync(resolve(root, 'src', 'client.js'), 'utf8');
-const body = stripHeader(src).replace(/\r\n/g, '\n').replace(/\n+$/, '');
+const body = stripHeader(src).replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n+$/, '');
 
 // A literal NUL in the source would corrupt the envelope silently. (Written
 // via fromCharCode so this guard cannot be confused by escaping.)
 if (body.includes(String.fromCharCode(0))) {
   throw new Error('build-client: literal NUL byte in src/client.js — use \\u0000');
+}
+// The envelope depends on the body ending in `return module.exports` — fail
+// loudly here rather than emitting a bundle that returns undefined.
+if (!/^\s*return\s+module\.exports\s*;?\s*$/.test(body.split('\n').pop())) {
+  throw new Error('build-client: src/client.js must end with "return module.exports"');
 }
 const outline = [
   'window.__ModuleLoader__.load({',

@@ -32,6 +32,12 @@ permissions:
   id-token: write # OIDC for npm trusted publishing + provenance
   contents: write # creating the GitHub Release on tag pushes
 
+# A release created with a brand-new tag fires BOTH push:tags and
+# release:published — one run at a time, and a newer trigger supersedes.
+concurrency:
+  group: publish
+  cancel-in-progress: true
+
 jobs:
   publish:
     runs-on: ubuntu-latest

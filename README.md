@@ -34,7 +34,7 @@ Restart `dsh web`, then open **Settings → General → Wallpaper Engine**.
 
 1. Pick a wallpaper from the thumbnail grid — it fades in behind the app. Use the search box to narrow large libraries.
 2. **Pause/Play** controls video playback; **Close** fades the wallpaper out; **Refresh** rescans the library (new workshop subscriptions appear without reloading the page).
-3. Tune the blend with the sliders. On busy wallpapers, raise **Scrim** and **Borders** until text is comfortable; the UI follows DSH's light/dark theme automatically.
+3. Tune the blend with the sliders. On busy wallpapers, raise **Scrim** and **Borders** until text is comfortable; the UI follows DSH's light/dark theme automatically. The **Fit/Align** row sets how video and still wallpapers sit on the canvas (cover/contain/stretch/original, five anchor points).
 4. Create rotation lists with **New**, fill them from the grid or import a WE playlist, then enable **Auto-rotate**.
 5. The resource row shows the current frame rate and offers two auto-pause switches. `prefers-reduced-motion` starts videos paused.
 6. The Language control switches the picker between Chinese and English; on Auto it follows the shell setting.
@@ -49,9 +49,9 @@ The bundle has two halves:
   - `GET /we-background/inventory[?refresh=1]`
   - `GET /we-background/media/<token>[/asset…]` — with HTTP Range support for video seeking; web wallpapers can fetch their bundled sub-assets
   - `GET /we-background/preview/<token>`
-- A **browser plugin** renders the chosen wallpaper on a fixed layer behind the app frame, contributes the settings UI, and keeps every effect on DSH design tokens so themes apply cleanly.
+- A **browser plugin** renders the chosen wallpaper on a fixed layer behind the app frame, contributes the settings UI, and keeps every effect on DSH design tokens so themes apply cleanly. Wallpaper blur is clipped overscan (no content warping) with a whisper of dither noise to keep gradients band-free; a video the browser cannot decode falls back to the wallpaper's preview image.
 
-The host answers from a 30-second inventory cache; discovery is resolved once at startup and reused. The bundle registers no model tools and adds no prompt text.
+The host answers from a 30-second inventory cache with stable per-wallpaper tokens (an in-flight stream is never killed by a background rebuild); discovery is resolved asynchronously and cached for ten minutes. The bundle registers no model tools and adds no prompt text.
 
 ## Limitations
 

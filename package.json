@@ -1,7 +1,7 @@
 {
   "name": "wallpaper-engine-dsh",
   "version": "0.1.5",
-  "description": "Wallpaper Engine Video/Web wallpapers as the DSH web GUI background — discovery, sandboxed rendering, rotation lists, liquid-glass tuning.",
+  "description": "Wallpaper Engine library as the DSH web GUI background — video/web/still wallpapers, rotation lists, search, resource monitor, bilingual UI.",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
@@ -9,10 +9,14 @@
     "type": "git",
     "url": "git+https://github.com/Weilv-D/wallpaper-engine-dsh.git"
   },
+  "bugs": "https://github.com/Weilv-D/wallpaper-engine-dsh/issues",
+  "homepage": "https://github.com/Weilv-D/wallpaper-engine-dsh#readme",
   "keywords": [
     "dsh",
     "dsh-plugin",
+    "deepseek",
     "deepseek-harness",
+    "cordis",
     "wallpaper",
     "wallpaper-engine",
     "background",
@@ -59,7 +63,7 @@
   "scripts": {
     "build": "node scripts/build-client.mjs",
     "verify": "node scripts/verify-client.mjs",
-    "test": "node --test test/core.test.mjs",
+    "test": "node --test test/core.test.mjs test/host.test.mjs",
     "prepare": "node scripts/prepare.mjs",
     "prepublishOnly": "npm run test && npm run build && npm run verify",
     "release": "npm version patch -m \"chore: release v%s\" && git push --follow-tags",

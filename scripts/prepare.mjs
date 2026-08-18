@@ -21,6 +21,10 @@ if (hasSource) {
   const r = spawnSync(process.execPath, [resolve(root, 'scripts', 'build-client.mjs')], {
     cwd: root, stdio: 'inherit',
   });
+  if (r.error) {
+    console.error('prepare: failed to run build:', r.error.message);
+    process.exit(1);
+  }
   process.exit(r.status ?? 1);
 }
 console.log('prepare: no client source present (published package) — skipped build');

@@ -116,7 +116,7 @@ const windowMock = {
   __ModuleLoader__: null, // installed below
   matchMedia: () => ({ matches: false }),
   setTimeout: (fn, ms) => {
-    const token = { fn, ms, cleared: false };
+    const token = { fn: () => { token.fired = true; fn(); }, ms, cleared: false, fired: false };
     timers.push(token);
     return token;
   },
@@ -407,6 +407,9 @@ setTimeout(async () => {
   check('body attribute removed on dispose', bodyEl.attributes['data-webg-wallpaper'] === undefined);
   check('css vars cleared on dispose', Object.keys(bodyEl.style._props).length === 0);
   check('rotation timer cleared on dispose', !pendingRotation || pendingRotation.cleared);
+  check('crossfade/clear leave timers cleared on dispose',
+    timers.filter((t) => !t.cleared && !t.fired && t.ms < 1000).length === 0,
+    String(timers.filter((t) => !t.cleared && !t.fired && t.ms < 1000).length));
 
   console.log(failures === 0 ? '\nALL CLIENT CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`);
   process.exit(failures === 0 ? 0 : 1);
