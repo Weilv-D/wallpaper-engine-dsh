@@ -1,7 +1,11 @@
 # Publish to npm via TRUSTED PUBLISHING (OIDC) — no long-lived token.
 #
-# Trigger: publishing a GitHub Release (tag MUST match package.json version,
-# e.g. release tag "v0.1.1" ↔ package.json "0.1.1"), or manual dispatch.
+# Triggers:
+#   - push a version tag (git tag v0.1.2 && git push origin v0.1.2) — the
+#     normal path; the GitHub Release is created automatically at the end
+#   - publishing a GitHub Release manually (tag must match package.json)
+#   - manual dispatch from the Actions tab
+# In every case the tag must equal package.json "version" (v prefix allowed).
 #
 # One-time setup (npm web):
 #   Package → Settings → Trusted Publisher → GitHub Actions:
@@ -18,13 +22,15 @@
 name: publish
 
 on:
+  push:
+    tags: ['v*']
   release:
     types: [published]
   workflow_dispatch:
 
 permissions:
   id-token: write # OIDC for npm trusted publishing + provenance
-  contents: read
+  contents: write # creating the GitHub Release on tag pushes
 
 jobs:
   publish:
@@ -45,9 +51,9 @@ jobs:
       - run: npm run build
       - run: npm run verify
 
-      # On release runs, the tag must match package.json version.
-      - name: assert release tag matches package.json version
-        if: github.event_name == 'release'
+      # Tag pushes and release runs carry a tag; it must match package.json.
+      - name: assert tag matches package.json version
+        if: github.event_name != 'workflow_dispatch'
         run: |
           PKG=$(node -p "require('./package.json').version")
           TAG="${GITHUB_REF_NAME#v}"
@@ -57,3 +63,11 @@ jobs:
       - run: npm publish --provenance --access public
         # env:
         #   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # On tag pushes, create the matching GitHub Release with generated
+      # notes. (On manual-release runs the release already exists.)
+      - name: create GitHub release
+        if: github.event_name == 'push'
+        run: gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --generate-notes --verify-tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

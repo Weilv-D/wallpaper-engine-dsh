@@ -61,7 +61,10 @@
     "verify": "node scripts/verify-client.mjs",
     "test": "node --test test/core.test.mjs",
     "prepare": "node scripts/prepare.mjs",
-    "prepublishOnly": "npm run test && npm run build && npm run verify"
+    "prepublishOnly": "npm run test && npm run build && npm run verify",
+    "release": "npm version patch -m \"chore: release v%s\" && git push --follow-tags",
+    "release:minor": "npm version minor -m \"chore: release v%s\" && git push --follow-tags",
+    "release:major": "npm version major -m \"chore: release v%s\" && git push --follow-tags"
   },
   "engines": {
     "node": ">=18.17"

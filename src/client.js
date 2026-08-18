@@ -18,6 +18,9 @@
  *      imported on first run.
  *   6. Resource monitor: FPS readout + low-FPS hint, auto-pause when the
  *      page is hidden or the battery is low (both toggleable).
+ *   7. Bilingual UI (中文/English): follows the DSH shell's Language setting
+ *      (locale service + locale/change event), with a manual override that
+ *      persists; falls back to the browser language.
  */
 
 const React = require("react");
@@ -40,6 +43,160 @@ const REDUCED_MOTION = typeof window !== "undefined" &&
   typeof window.matchMedia === "function" &&
   window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+// ── i18n ─────────────────────────────────────────────────────────────────────
+const STRINGS = {
+  zh: {
+    settingsLabel: "壁纸背景 (Wallpaper Engine)",
+    scanning: "正在扫描 Wallpaper Engine…",
+    connError: "未能连接 Wallpaper Engine:",
+    retry: "重试",
+    refreshing: "刷新中…",
+    refresh: "刷新",
+    pause: "暂停",
+    play: "播放",
+    close: "关闭",
+    searchPlaceholder: "搜索壁纸(标题或 ID)…",
+    matched: (m, n) => "匹配 " + m + " / " + n + " 张",
+    emptyNoInstall: "未检测到 Wallpaper Engine — 请确认已通过 Steam 安装",
+    emptyNoUsable: (n) => "已发现 " + n + " 张壁纸,但都缺少可播放内容或预览图",
+    emptyNoProjects: "未在任何项目目录中发现壁纸(默认项目/我的项目/创意工坊)",
+    noMatch: (q) => "没有匹配「" + q + "」的壁纸",
+    closeCard: "✕ 关闭",
+    closeTitle: "关闭壁纸",
+    noPreview: "无预览",
+    badgeVideo: "视频",
+    badgeWeb: "网页",
+    badgeStill: "静态",
+    rotationList: "轮播列表",
+    selectList: "— 选择轮播列表 —",
+    noLists: "— 暂无轮播列表 —",
+    groupOption: (name, count, interval) => name + "(" + count + " 可用 · " + interval + " 分钟)",
+    newList: "新建",
+    editList: "编辑",
+    deleteList: "删除",
+    name: "名称",
+    interval: "间隔",
+    order: "顺序",
+    sequence: "顺序",
+    random: "随机",
+    minutes: (m) => m + " 分钟",
+    filterPlaceholder: "搜索以筛选…",
+    noUsable: "没有可用壁纸",
+    selectedCount: (n) => "已选 " + n + " 个",
+    importPlaylist: "从 WE 播放列表导入…",
+    playlistOption: (name, count) => name + "(" + count + " 可播放)",
+    save: "保存",
+    cancel: "取消",
+    autoRotate: "自动轮转",
+    intervalTitle: "当前列表的切换间隔",
+    needList: "请先选择或新建一个轮播列表",
+    needTwo: "当前列表至少需要 2 张可用壁纸",
+    wallpaperBlur: "壁纸模糊",
+    scrim: "暗化",
+    border: "边框",
+    glass: "玻璃",
+    pauseOnHidden: "页面隐藏时暂停",
+    pauseOnBattery: "低电量时暂停",
+    fpsTitle: "页面当前渲染帧率",
+    lowFpsHint: "帧率偏低,可尝试暂停视频、增大壁纸模糊或换用静态壁纸",
+    language: "语言",
+    langAuto: "自动",
+    statusGroup: (name, total, usable, interval, order) =>
+      "列表「" + name + "」:" + total + " 项 · " + usable + " 可用 · 每 " + interval + " 分钟 · " + order,
+    statusUsable: (n) => n + " 张可用壁纸",
+    autoRotating: "自动轮转中",
+    autoPaused: "已自动暂停",
+    confirmDelete: (name) => "删除轮播列表「" + name + "」?",
+    defaultGroupName: (n) => "轮播列表 " + n,
+    defaultGroupBase: "轮播列表",
+  },
+  en: {
+    settingsLabel: "Wallpaper Engine",
+    scanning: "Scanning Wallpaper Engine…",
+    connError: "Could not reach Wallpaper Engine: ",
+    retry: "Retry",
+    refreshing: "Refreshing…",
+    refresh: "Refresh",
+    pause: "Pause",
+    play: "Play",
+    close: "Close",
+    searchPlaceholder: "Search wallpapers (title or ID)…",
+    matched: (m, n) => m + " / " + n + " matched",
+    emptyNoInstall: "Wallpaper Engine not found — make sure it is installed via Steam",
+    emptyNoUsable: (n) => "Found " + n + " wallpapers, but none have playable media or a preview image",
+    emptyNoProjects: "No wallpapers found in any project folder (defaults / my projects / workshop)",
+    noMatch: (q) => "No wallpapers match \"" + q + "\"",
+    closeCard: "✕ Close",
+    closeTitle: "Clear wallpaper",
+    noPreview: "No preview",
+    badgeVideo: "Video",
+    badgeWeb: "Web",
+    badgeStill: "Still",
+    rotationList: "Rotation list",
+    selectList: "— Select a list —",
+    noLists: "— No lists yet —",
+    groupOption: (name, count, interval) => name + "(" + count + " usable · " + interval + " min)",
+    newList: "New",
+    editList: "Edit",
+    deleteList: "Delete",
+    name: "Name",
+    interval: "Interval",
+    order: "Order",
+    sequence: "Sequence",
+    random: "Random",
+    minutes: (m) => m + " min",
+    filterPlaceholder: "Filter…",
+    noUsable: "No usable wallpapers",
+    selectedCount: (n) => n + " selected",
+    importPlaylist: "Import from WE playlist…",
+    playlistOption: (name, count) => name + "(" + count + " playable)",
+    save: "Save",
+    cancel: "Cancel",
+    autoRotate: "Auto-rotate",
+    intervalTitle: "Switch interval for the current list",
+    needList: "Create or select a rotation list first",
+    needTwo: "The list needs at least 2 usable wallpapers",
+    wallpaperBlur: "Wallpaper blur",
+    scrim: "Scrim",
+    border: "Borders",
+    glass: "Glass",
+    pauseOnHidden: "Pause when tab hidden",
+    pauseOnBattery: "Pause on low battery",
+    fpsTitle: "Current page frame rate",
+    lowFpsHint: "Low frame rate — try pausing the video, raising wallpaper blur, or using a still wallpaper",
+    language: "Language",
+    langAuto: "Auto",
+    statusGroup: (name, total, usable, interval, order) =>
+      "List \"" + name + "\": " + total + " items · " + usable + " usable · every " + interval + " min · " + order,
+    statusUsable: (n) => n + " usable wallpapers",
+    autoRotating: "Auto-rotating",
+    autoPaused: "Auto-paused",
+    confirmDelete: (name) => "Delete rotation list \"" + name + "\"?",
+    defaultGroupName: (n) => "Rotation list " + n,
+    defaultGroupBase: "Rotation list",
+  },
+};
+
+/** Language the DSH shell reports via its locale service (null = unknown). */
+let shellLang = null;
+
+function browserLang() {
+  if (typeof navigator !== "undefined" && navigator.language) {
+    return String(navigator.language).toLowerCase().startsWith("zh") ? "zh" : "en";
+  }
+  return null;
+}
+
+function resolveLang() {
+  if (selection.lang === "zh" || selection.lang === "en") return selection.lang;
+  return shellLang || browserLang() || "zh";
+}
+
+/** Current string table. */
+function S() {
+  return STRINGS[resolveLang()];
+}
+
 // ── Defaults ─────────────────────────────────────────────────────────────────
 const DEFAULTS = {
   scrim: 0.25,
@@ -53,6 +210,7 @@ const DEFAULTS = {
   rotationSeeded: false,
   pauseOnHidden: true,
   pauseOnBattery: true,
+  lang: "auto",
 };
 
 // ── Persisted selection ─────────────────────────────────────────────────────
@@ -60,7 +218,7 @@ function clampNum(v, lo, hi, fallback) {
   return typeof v === "number" && isFinite(v) && v >= lo && v <= hi ? v : fallback;
 }
 
-function readRotationGroups(raw) {
+function readRotationGroups(raw, baseName) {
   if (!Array.isArray(raw)) return [];
   const groups = [];
   for (const g of raw) {
@@ -69,7 +227,7 @@ function readRotationGroups(raw) {
     if (!id) continue;
     groups.push({
       id,
-      name: typeof g.name === "string" && g.name.trim() ? g.name.trim() : "轮播列表",
+      name: typeof g.name === "string" && g.name.trim() ? g.name.trim() : baseName,
       interval: clampNum(g.interval, 1, 1440, DEFAULTS.rotationInterval),
       order: g.order === "random" ? "random" : "sequence",
       wallpaperIds: Array.isArray(g.wallpaperIds)
@@ -93,10 +251,11 @@ function readPersisted() {
       wallpaperBlur: clampNum(o.wallpaperBlur, 0, 60, DEFAULTS.wallpaperBlur),
       rotationEnabled: o.rotationEnabled === true,
       rotationGroupId: typeof o.rotationGroupId === "string" ? o.rotationGroupId : "",
-      rotationGroups: readRotationGroups(o.rotationGroups),
+      rotationGroups: readRotationGroups(o.rotationGroups, STRINGS.zh.defaultGroupBase),
       rotationSeeded: o.rotationSeeded === true,
       pauseOnHidden: o.pauseOnHidden !== false,
       pauseOnBattery: o.pauseOnBattery !== false,
+      lang: o.lang === "zh" || o.lang === "en" ? o.lang : "auto",
     };
   } catch {
     return { id: "", ...DEFAULTS };
@@ -145,6 +304,7 @@ function persistSelection() {
       rotationSeeded: selection.rotationSeeded,
       pauseOnHidden: selection.pauseOnHidden,
       pauseOnBattery: selection.pauseOnBattery,
+      lang: selection.lang,
     }));
   } catch { /* storage full / blocked → session-only state, not fatal */ }
 }
@@ -263,7 +423,7 @@ function seedGroupsFromPlaylists() {
   if (ids.length < 2) return false;
   selection.rotationGroups.push({
     id: nextGroupId(),
-    name: typeof source.name === "string" && source.name.trim() ? source.name.trim() : "轮播列表",
+    name: typeof source.name === "string" && source.name.trim() ? source.name.trim() : S().defaultGroupBase,
     interval: DEFAULTS.rotationInterval,
     order: source.order === "random" ? "random" : "sequence",
     wallpaperIds: ids,
@@ -322,7 +482,7 @@ function startEditGroup(id) {
 function startCreateGroup() {
   selection.editing = {
     id: nextGroupId(),
-    name: "轮播列表 " + (selection.rotationGroups.length + 1),
+    name: S().defaultGroupName(selection.rotationGroups.length + 1),
     interval: DEFAULTS.rotationInterval,
     order: "sequence",
     wallpaperIds: [],
@@ -336,7 +496,7 @@ function saveEditingGroup() {
   const idx = selection.rotationGroups.findIndex((g) => g.id === draft.id);
   const cleaned = {
     id: draft.id,
-    name: typeof draft.name === "string" && draft.name.trim() ? draft.name.trim() : "轮播列表",
+    name: typeof draft.name === "string" && draft.name.trim() ? draft.name.trim() : S().defaultGroupBase,
     interval: clampNum(draft.interval, 1, 1440, DEFAULTS.rotationInterval),
     order: draft.order === "random" ? "random" : "sequence",
     wallpaperIds: Array.isArray(draft.wallpaperIds)
@@ -591,10 +751,10 @@ function SliderRow(label, min, max, step, value, onInput, suffix) {
   );
 }
 
-function typeBadge(w) {
-  if (w.type === "video") return "视频";
-  if (w.type === "web") return "网页";
-  return "静态";
+function typeBadge(w, t) {
+  if (w.type === "video") return t.badgeVideo;
+  if (w.type === "web") return t.badgeWeb;
+  return t.badgeStill;
 }
 
 function matchesQuery(w, q) {
@@ -603,21 +763,21 @@ function matchesQuery(w, q) {
   return (w.title || "").toLowerCase().includes(needle) || (w.id || "").toLowerCase().includes(needle);
 }
 
-function ThumbCard(w, selected, onClick) {
+function ThumbCard(w, selected, onClick, t) {
   return React.createElement("button", {
     key: w.id,
     className: "webg-card" + (selected ? " webg-card--selected" : ""),
     type: "button",
     onClick: onClick,
-    title: w.title + "(" + typeBadge(w) + ")",
+    title: w.title + "(" + typeBadge(w, t) + ")",
   },
   w.preview
     ? React.createElement("img", {
         src: w.preview, alt: w.title, loading: "lazy", decoding: "async",
         onError: (e) => { e.target.style.display = "none"; },
       })
-    : React.createElement("span", { className: "webg-card-placeholder" }, "无预览"),
-  React.createElement("span", { className: "webg-card-type" }, typeBadge(w)),
+    : React.createElement("span", { className: "webg-card-placeholder" }, t.noPreview),
+  React.createElement("span", { className: "webg-card-type" }, typeBadge(w, t)),
   React.createElement("span", { className: "webg-card-title" }, w.title),
   );
 }
@@ -626,9 +786,15 @@ function WallpaperPicker() {
   const sel = useStore();
   const [query, setQuery] = React.useState("");
   const [editorQuery, setEditorQuery] = React.useState("");
+  const t = S();
   const onTogglePlay = () => { selection.playing = !selection.playing; emit(); };
   const onClear = () => applySelection("");
   const onRefresh = () => loadInventory(true);
+  const onLangChange = (e) => {
+    selection.lang = e.target.value;
+    persistSelection();
+    emit();
+  };
   const onGroupChange = (e) => {
     selection.rotationGroupId = e.target.value;
     if (selection.rotationEnabled) {
@@ -669,7 +835,7 @@ function WallpaperPicker() {
     const group = activeRotationGroup();
     if (!group) return;
     if (typeof window !== "undefined" && typeof window.confirm === "function") {
-      if (!window.confirm("删除轮播列表「" + group.name + "」?")) return;
+      if (!window.confirm(t.confirmDelete(group.name))) return;
     }
     deleteGroup(group.id);
   };
@@ -693,15 +859,15 @@ function WallpaperPicker() {
 
   if (!sel.loaded) {
     return React.createElement("div", { className: "webg-picker" },
-      React.createElement("span", { className: "webg-hint" }, "正在扫描 Wallpaper Engine…"));
+      React.createElement("span", { className: "webg-hint" }, t.scanning));
   }
   if (sel.inventory.error) {
     return React.createElement("div", { className: "webg-picker" },
       React.createElement("div", { className: "webg-error" },
-        "未能连接 Wallpaper Engine:" + sel.inventory.error),
+        t.connError + sel.inventory.error),
       React.createElement("button", {
         className: "webg-btn", type: "button", onClick: onRefresh, disabled: sel.loading,
-      }, sel.loading ? "刷新中…" : "重试"));
+      }, sel.loading ? t.refreshing : t.retry));
   }
 
   const usableList = selectableInventory();
@@ -716,16 +882,28 @@ function WallpaperPicker() {
   const INTERVALS = [1, 5, 10, 30, 60, 120];
 
   return React.createElement("div", { className: "webg-picker" },
-    // ── Search ──
+    // ── Search + language ──
     React.createElement("div", { className: "webg-row" },
       React.createElement("input", {
         className: "webg-text webg-search", type: "search",
-        placeholder: "搜索壁纸(标题或 ID)…",
+        placeholder: t.searchPlaceholder,
         value: query,
         onInput: (e) => setQuery(e.target.value),
       }),
       q && React.createElement("span", { className: "webg-hint" },
-        "匹配 " + filteredList.length + " / " + usableList.length + " 张"),
+        t.matched(filteredList.length, usableList.length)),
+      React.createElement("label", { className: "webg-lang" },
+        React.createElement("span", { className: "webg-hint" }, t.language),
+        React.createElement("select", {
+          className: "webg-select webg-lang-select",
+          value: sel.lang,
+          onChange: onLangChange,
+        },
+        React.createElement("option", { value: "auto" }, t.langAuto),
+        React.createElement("option", { value: "zh" }, "中文"),
+        React.createElement("option", { value: "en" }, "English"),
+        ),
+      ),
     ),
     // ── Grid ──
     React.createElement("div", { className: "webg-grid" },
@@ -733,67 +911,67 @@ function WallpaperPicker() {
         className: "webg-card" + (sel.id ? "" : " webg-card--selected"),
         type: "button",
         onClick: onClear,
-        title: "关闭壁纸",
+        title: t.closeTitle,
       },
-      React.createElement("span", { className: "webg-card-close" }, "✕ 关闭"),
+      React.createElement("span", { className: "webg-card-close" }, t.closeCard),
       ),
       usableList.length === 0
         ? React.createElement("span", { className: "webg-hint" },
             sel.inventory.installDir
               ? (sel.inventory.total > 0
-                  ? "已发现 " + sel.inventory.total + " 张壁纸,但都缺少可播放内容或预览图"
-                  : "未在任何项目目录中发现壁纸(默认项目/我的项目/创意工坊)")
-              : "未检测到 Wallpaper Engine — 请确认已通过 Steam 安装")
+                  ? t.emptyNoUsable(sel.inventory.total)
+                  : t.emptyNoProjects)
+              : t.emptyNoInstall)
         : filteredList.length === 0
-          ? React.createElement("span", { className: "webg-hint" }, "没有匹配「" + q + "」的壁纸")
-          : filteredList.map((w) => ThumbCard(w, w.id === sel.id, () => applySelection(w.id))),
+          ? React.createElement("span", { className: "webg-hint" }, t.noMatch(q))
+          : filteredList.map((w) => ThumbCard(w, w.id === sel.id, () => applySelection(w.id), t)),
     ),
     // ── Actions ──
     React.createElement("div", { className: "webg-row" },
       React.createElement("button", {
         className: "webg-btn", type: "button",
         onClick: onTogglePlay, disabled: !sel.url || sel.type !== "video",
-      }, sel.playing ? "暂停" : "播放"),
+      }, sel.playing ? t.pause : t.play),
       React.createElement("button", {
         className: "webg-btn", type: "button",
         onClick: onClear, disabled: !sel.id,
-      }, "关闭"),
+      }, t.close),
       React.createElement("button", {
         className: "webg-btn", type: "button",
         onClick: onRefresh, disabled: sel.loading,
-      }, sel.loading ? "刷新中…" : "刷新"),
+      }, sel.loading ? t.refreshing : t.refresh),
     ),
     // ── Rotation groups ──
     React.createElement("div", { className: "webg-row webg-playlist-row" },
-      React.createElement("span", { className: "webg-hint webg-label" }, "轮播列表"),
+      React.createElement("span", { className: "webg-hint webg-label" }, t.rotationList),
       React.createElement("select", {
         className: "webg-select webg-playlist-select",
         value: sel.rotationGroupId,
         onChange: onGroupChange,
         disabled: groups.length === 0,
       },
-      React.createElement("option", { value: "" }, groups.length ? "— 选择轮播列表 —" : "— 暂无轮播列表 —"),
+      React.createElement("option", { value: "" }, groups.length ? t.selectList : t.noLists),
       ...groups.map((g) => React.createElement("option", {
         key: g.id, value: g.id,
-      }, g.name + "(" + groupWallpapers(g).length + " 可用 · " + g.interval + " 分钟)")),
+      }, t.groupOption(g.name, groupWallpapers(g).length, g.interval))),
       ),
       React.createElement("button", {
         className: "webg-btn", type: "button", onClick: startCreateGroup,
-      }, "新建"),
+      }, t.newList),
       React.createElement("button", {
         className: "webg-btn", type: "button",
         onClick: () => startEditGroup(sel.rotationGroupId),
         disabled: !sel.rotationGroupId,
-      }, "编辑"),
+      }, t.editList),
       React.createElement("button", {
         className: "webg-btn", type: "button",
         onClick: onDeleteGroup,
         disabled: !sel.rotationGroupId,
-      }, "删除"),
+      }, t.deleteList),
     ),
     editing && React.createElement("div", { className: "webg-editor" },
       React.createElement("div", { className: "webg-row" },
-        React.createElement("span", { className: "webg-hint webg-label" }, "名称"),
+        React.createElement("span", { className: "webg-hint webg-label" }, t.name),
         React.createElement("input", {
           className: "webg-text", type: "text",
           value: editing.name,
@@ -801,28 +979,28 @@ function WallpaperPicker() {
         }),
       ),
       React.createElement("div", { className: "webg-row" },
-        React.createElement("span", { className: "webg-hint webg-label" }, "间隔"),
+        React.createElement("span", { className: "webg-hint webg-label" }, t.interval),
         React.createElement("select", {
           className: "webg-select",
           value: String(editing.interval),
           onChange: (e) => { editing.interval = clampNum(Number(e.target.value), 1, 1440, DEFAULTS.rotationInterval); emit(); },
         },
         ...INTERVALS.map((minutes) =>
-          React.createElement("option", { key: minutes, value: String(minutes) }, minutes + " 分钟"),
+          React.createElement("option", { key: minutes, value: String(minutes) }, t.minutes(minutes)),
         )),
-        React.createElement("span", { className: "webg-hint webg-label" }, "顺序"),
+        React.createElement("span", { className: "webg-hint webg-label" }, t.order),
         React.createElement("select", {
           className: "webg-select webg-playlist-select",
           value: editing.order,
           onChange: (e) => { editing.order = e.target.value; emit(); },
         },
-        React.createElement("option", { value: "sequence" }, "顺序"),
-        React.createElement("option", { value: "random" }, "随机"),
+        React.createElement("option", { value: "sequence" }, t.sequence),
+        React.createElement("option", { value: "random" }, t.random),
         ),
       ),
       React.createElement("input", {
         className: "webg-text", type: "search",
-        placeholder: "搜索以筛选…",
+        placeholder: t.filterPlaceholder,
         value: editorQuery,
         onInput: (e) => setEditorQuery(e.target.value),
       }),
@@ -831,10 +1009,10 @@ function WallpaperPicker() {
           const eq = editorQuery.trim();
           const pool = usableList.filter((w) => matchesQuery(w, eq));
           if (usableList.length === 0) {
-            return React.createElement("span", { className: "webg-hint" }, "没有可用壁纸");
+            return React.createElement("span", { className: "webg-hint" }, t.noUsable);
           }
           if (pool.length === 0) {
-            return React.createElement("span", { className: "webg-hint" }, "没有匹配「" + eq + "」的壁纸");
+            return React.createElement("span", { className: "webg-hint" }, t.noMatch(eq));
           }
           return pool.map((w) => {
             const checked = editing.wallpaperIds.indexOf(w.id) >= 0;
@@ -842,7 +1020,7 @@ function WallpaperPicker() {
               key: w.id,
               className: "webg-editor-card" + (checked ? " webg-editor-card--checked" : ""),
               type: "button",
-              title: w.title + "(" + typeBadge(w) + ")",
+              title: w.title + "(" + typeBadge(w, t) + ")",
               onClick: () => {
                 const i = editing.wallpaperIds.indexOf(w.id);
                 if (i >= 0) editing.wallpaperIds.splice(i, 1);
@@ -855,14 +1033,14 @@ function WallpaperPicker() {
                   src: w.preview, alt: w.title, loading: "lazy", decoding: "async",
                   onError: (e) => { e.target.style.display = "none"; },
                 })
-              : React.createElement("span", { className: "webg-card-placeholder" }, "无预览"),
+              : React.createElement("span", { className: "webg-card-placeholder" }, t.noPreview),
             checked && React.createElement("span", { className: "webg-editor-check" }, "✓"),
             );
           });
         })(),
       ),
       React.createElement("div", { className: "webg-row" },
-        React.createElement("span", { className: "webg-hint" }, "已选 " + editing.wallpaperIds.length + " 个"),
+        React.createElement("span", { className: "webg-hint" }, t.selectedCount(editing.wallpaperIds.length)),
         sel.inventory.playlists.length > 0 && React.createElement("select", {
           className: "webg-select webg-playlist-select",
           value: "",
@@ -871,21 +1049,21 @@ function WallpaperPicker() {
             if (p) importPlaylistIntoDraft(p);
           },
         },
-        React.createElement("option", { value: "" }, "从 WE 播放列表导入…"),
+        React.createElement("option", { value: "" }, t.importPlaylist),
         ...sel.inventory.playlists.map((p) => React.createElement("option", {
           key: p.id, value: p.id,
-        }, p.name + "(" + (p.portableCount || 0) + " 可播放)")),
+        }, t.playlistOption(p.name, p.portableCount || 0))),
         ),
       ),
       React.createElement("div", { className: "webg-row" },
         React.createElement("button", {
           className: "webg-btn webg-btn--primary", type: "button",
           onClick: saveEditingGroup,
-        }, "保存"),
+        }, t.save),
         React.createElement("button", {
           className: "webg-btn", type: "button",
           onClick: cancelEditGroup,
-        }, "取消"),
+        }, t.cancel),
       ),
     ),
     React.createElement("div", { className: "webg-row webg-rotation-row" },
@@ -896,27 +1074,27 @@ function WallpaperPicker() {
           onChange: onToggleRotation,
           disabled: !sel.rotationGroupId || usableCount < 2,
         }),
-        "自动轮转",
+        t.autoRotate,
       ),
       React.createElement("select", {
         className: "webg-select webg-rotation-interval",
         value: String(group ? group.interval : DEFAULTS.rotationInterval),
         onChange: onGroupInterval,
         disabled: !sel.rotationEnabled || !sel.rotationGroupId || usableCount < 2,
-        title: "当前列表的切换间隔",
+        title: t.intervalTitle,
       },
       ...INTERVALS.map((minutes) =>
-        React.createElement("option", { key: minutes, value: String(minutes) }, minutes + " 分钟"),
+        React.createElement("option", { key: minutes, value: String(minutes) }, t.minutes(minutes)),
       )),
-      !sel.rotationGroupId && React.createElement("span", { className: "webg-hint" }, "请先选择或新建一个轮播列表"),
-      sel.rotationGroupId && usableCount < 2 && React.createElement("span", { className: "webg-hint" }, "当前列表至少需要 2 张可用壁纸"),
+      !sel.rotationGroupId && React.createElement("span", { className: "webg-hint" }, t.needList),
+      sel.rotationGroupId && usableCount < 2 && React.createElement("span", { className: "webg-hint" }, t.needTwo),
     ),
     // ── Effects ──
     sel.id && React.createElement(React.Fragment, null,
-      SliderRow("壁纸模糊", 0, 60, 1, sel.wallpaperBlur, onWallpaperBlur, sel.wallpaperBlur + "px"),
-      SliderRow("暗化", 0, 90, 5, Math.round(sel.scrim * 100), onScrim, Math.round(sel.scrim * 100) + "%"),
-      SliderRow("边框", 0, 90, 5, Math.round(sel.border * 100), onBorder, Math.round(sel.border * 100) + "%"),
-      SliderRow("玻璃", 0, 40, 1, sel.blur, onBlur, sel.blur + "px"),
+      SliderRow(t.wallpaperBlur, 0, 60, 1, sel.wallpaperBlur, onWallpaperBlur, sel.wallpaperBlur + "px"),
+      SliderRow(t.scrim, 0, 90, 5, Math.round(sel.scrim * 100), onScrim, Math.round(sel.scrim * 100) + "%"),
+      SliderRow(t.border, 0, 90, 5, Math.round(sel.border * 100), onBorder, Math.round(sel.border * 100) + "%"),
+      SliderRow(t.glass, 0, 40, 1, sel.blur, onBlur, sel.blur + "px"),
     ),
     // ── Resource monitor ──
     sel.id && React.createElement("div", { className: "webg-row webg-monitor-row" },
@@ -924,32 +1102,32 @@ function WallpaperPicker() {
         React.createElement("input", {
           type: "checkbox", checked: sel.pauseOnHidden, onChange: onTogglePauseOnHidden,
         }),
-        "页面隐藏时暂停",
+        t.pauseOnHidden,
       ),
       React.createElement("label", { className: "webg-toggle" },
         React.createElement("input", {
           type: "checkbox", checked: sel.pauseOnBattery, onChange: onTogglePauseOnBattery,
         }),
-        "低电量时暂停",
+        t.pauseOnBattery,
       ),
       sel.fps !== null && React.createElement("span", {
         className: "webg-hint webg-fps" + (sel.fps < LOW_FPS ? " webg-fps--low" : ""),
-        title: "页面当前渲染帧率",
+        title: t.fpsTitle,
       }, sel.fps + " fps"),
     ),
     sel.id && sel.fps !== null && sel.fps < LOW_FPS && sel.type === "video" &&
       React.createElement("div", { className: "webg-row" },
-        React.createElement("span", { className: "webg-hint" },
-          "帧率偏低,可尝试暂停视频、增大壁纸模糊或换用静态壁纸"),
+        React.createElement("span", { className: "webg-hint" }, t.lowFpsHint),
       ),
     // ── Status ──
     React.createElement("div", { className: "webg-row" },
       React.createElement("span", { className: "webg-hint" },
         (group
-          ? "列表「" + group.name + "」:" + group.wallpaperIds.length + " 项 · " + usableCount + " 可用 · 每 " + group.interval + " 分钟 · " + (group.order === "random" ? "随机" : "顺序")
-          : usableList.length + " 张可用壁纸") +
-        (sel.rotationEnabled ? " · 自动轮转中" : "") +
-        (autoPaused ? " · 已自动暂停" : "") +
+          ? t.statusGroup(group.name, group.wallpaperIds.length, usableCount, group.interval,
+              group.order === "random" ? t.random : t.sequence)
+          : t.statusUsable(usableList.length)) +
+        (sel.rotationEnabled ? " · " + t.autoRotating : "") +
+        (autoPaused ? " · " + t.autoPaused : "") +
         (sel.inventory.installDir ? " · " + sel.inventory.installDir : "")),
     ),
   );
@@ -1073,6 +1251,7 @@ const CSS = `
   }
   .webg-text { flex: 1; min-width: 0; }
   .webg-search { max-width: 320px; }
+  .webg-lang { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
   .webg-playlist-select { flex: 1; min-width: 0; }
   .webg-rotation-interval { margin-left: auto; }
   .webg-toggle {
@@ -1171,6 +1350,25 @@ const CSS = `
 const inject = ["slots"];
 
 function apply(ctx) {
+  // 0. Language: follow the shell's locale service when present, and react
+  //    to its change events. Everything is optional — without the service
+  //    the browser language decides, and the manual override always wins.
+  const localeSvc = typeof ctx.get === "function" ? ctx.get("locale") : undefined;
+  if (localeSvc && typeof localeSvc.getLocale === "function") {
+    try {
+      const snap = localeSvc.getLocale();
+      if (snap && snap.active) shellLang = snap.active === "en" ? "en" : "zh";
+    } catch { /* keep browser fallback */ }
+  }
+  if (typeof ctx.on === "function") {
+    try {
+      ctx.on("locale/change", (snap) => {
+        const next = snap && snap.active === "en" ? "en" : "zh";
+        if (next !== shellLang) { shellLang = next; emit(); }
+      });
+    } catch { /* event bus unavailable → static language */ }
+  }
+
   // 1. Styles: owned by the fiber — injected on apply, REMOVED on dispose.
   if (ctx.effect && typeof document !== "undefined") {
     ctx.effect(() => {
@@ -1284,7 +1482,7 @@ function apply(ctx) {
   if (ctx.slots) {
     ctx.slots.inject("settings.general.item", () =>
       ctx.slots.register(
-        { name: "settings.general.item", id: "we-background", order: 500, label: "壁纸背景 (Wallpaper Engine)" },
+        { name: "settings.general.item", id: "we-background", order: 500, label: S().settingsLabel },
         () => React.createElement(WallpaperPicker),
       ),
     );

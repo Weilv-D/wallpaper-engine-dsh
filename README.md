@@ -2,15 +2,16 @@
 
 [English](README.md) | [中文](README.zh.md)
 
-A DSH bundle that turns your local **Wallpaper Engine** library into the live background of the DSH web GUI (`dsh web`). Video wallpapers play behind the chat, web wallpapers render in place, and scene/application wallpapers join in as still images — with crossfade transitions, liquid-glass panels, rotation lists, search, and a resource monitor.
+A DSH bundle that turns your local **Wallpaper Engine** library into the live background of the DSH web GUI (`dsh web`). Video wallpapers play behind the chat, web wallpapers render in place, and scene/application wallpapers join in as still images — with crossfade transitions, liquid-glass panels, rotation lists, search, a resource monitor, and a bilingual UI.
 
 ## Features
 
-- **Whole-library browsing** — video and web wallpapers render live; scene and application wallpapers show their preview as a static background. Everything with a preview or playable file is selectable, badged by type (视频 / 网页 / 静态).
+- **Whole-library browsing** — video and web wallpapers render live; scene and application wallpapers show their preview as a static background. Everything with a preview or playable file is selectable, badged by type (Video / Web / Still).
 - **Search** — filter the grid instantly by title or workshop id.
 - **Rotation lists** — any number of carousel lists, each with its own wallpapers, interval (1–120 min) and order (sequence/random). Your first playable Wallpaper Engine playlist is imported automatically; others can be imported into any list.
 - **Four live sliders** — wallpaper blur, scrim, border contrast, and glass frosting, all instant and persisted.
 - **Resource monitor** — FPS readout with a low-framerate hint, plus auto-pause when the tab is hidden or the battery runs low (both optional).
+- **Bilingual** — the settings UI follows the shell's Language preference (Chinese/English), with a manual override in the picker.
 - **Crossfade** — wallpaper switches and clearing fade smoothly instead of snapping.
 
 ## Install
@@ -26,15 +27,16 @@ git clone https://github.com/Weilv-D/wallpaper-engine-dsh.git
 dsh plugin --profile web add link:<absolute path to the cloned folder>
 ```
 
-Restart `dsh web`, then open **Settings → General → 壁纸背景 (Wallpaper Engine)**.
+Restart `dsh web`, then open **Settings → General → Wallpaper Engine**.
 
 ## Usage
 
 1. Pick a wallpaper from the thumbnail grid — it fades in behind the app. Use the search box to narrow large libraries.
-2. **暂停/播放** controls video playback; **关闭** fades the wallpaper out; **刷新** rescans the library (new workshop subscriptions appear without reloading the page).
-3. Tune the blend with the sliders. On busy wallpapers, raise **暗化** and **边框** until text is comfortable; the UI follows DSH's light/dark theme automatically.
-4. Create rotation lists with **新建**, fill them from the grid or import a WE playlist, then enable **自动轮转**.
+2. **Pause/Play** controls video playback; **Close** fades the wallpaper out; **Refresh** rescans the library (new workshop subscriptions appear without reloading the page).
+3. Tune the blend with the sliders. On busy wallpapers, raise **Scrim** and **Borders** until text is comfortable; the UI follows DSH's light/dark theme automatically.
+4. Create rotation lists with **New**, fill them from the grid or import a WE playlist, then enable **Auto-rotate**.
 5. The resource row shows the current frame rate and offers two auto-pause switches. `prefers-reduced-motion` starts videos paused.
+6. The Language control switches the picker between Chinese and English; on Auto it follows the shell setting.
 
 Your selection persists in the browser's `localStorage`.
 
@@ -69,8 +71,10 @@ Layout: `lib/core.js` (pure, tested logic), `lib/index.js` (host plugin), `src/c
 
 ## Releasing
 
-Releases publish automatically via GitHub Actions and npm Trusted Publishing (OIDC, no stored tokens):
+Releases publish automatically via GitHub Actions and npm Trusted Publishing (OIDC, no stored tokens). One command does everything locally:
 
-1. Bump `version` in `package.json` and push.
-2. Create a GitHub Release tagged `v<version>` (must match `package.json`).
-3. The workflow runs the gate, verifies tag ↔ version, and publishes with provenance.
+```sh
+npm run release          # patch bump; also release:minor / release:major
+```
+
+It bumps `version`, commits, tags `v<version>`, and pushes both. The tag push triggers the publish workflow: full gate → tag ↔ version check → `npm publish --provenance` → the GitHub Release is created automatically with generated notes.

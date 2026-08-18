@@ -223,16 +223,18 @@ check('registers settings.general.item row',
 check('style tag injected on apply', headEl.children.some((n) => n.tagName === 'STYLE'));
 check('initial fetch hits inventory', fetchCalls.includes('/we-background/inventory'), fetchCalls.join(','));
 
-// Walk a rendered picker tree for button descriptors.
-function collectButtons(tree) {
-  const buttons = [];
+// Walk a rendered picker tree for button / select descriptors.
+function collectButtons(tree) { return collectByType(tree, 'button'); }
+function collectSelects(tree) { return collectByType(tree, 'select'); }
+function collectByType(tree, type) {
+  const found = [];
   (function walk(node) {
     if (Array.isArray(node)) { node.forEach(walk); return; }
     if (!node || typeof node !== 'object') return;
-    if (node.type === 'button') buttons.push(node);
+    if (node.type === type) found.push(node);
     if (Array.isArray(node.children)) node.children.forEach(walk);
   })(tree);
-  return buttons;
+  return found;
 }
 
 // ── Async assertions after the inventory resolves ───────────────────────────
@@ -345,6 +347,27 @@ setTimeout(async () => {
       check('clear removes all layers after fade', documentMock.querySelectorAll('.webg-layer').length === 0);
       check('clear removes scrim after fade', !documentMock.getElementById('wallpaper-engine-dsh-scrim'));
       check('clear removes body attribute after fade', bodyEl.attributes['data-webg-wallpaper'] === undefined);
+    }
+
+    // ── i18n: default UI is Chinese; switching to English re-renders. ──
+    const langSelect = collectSelects(tree).find((s) =>
+      String(s.props.className || '').includes('webg-lang-select'));
+    check('language selector present', Boolean(langSelect));
+    check('default language is Chinese (刷新 button)', buttons.some((b) =>
+      Array.isArray(b.children) && b.children.includes('刷新')));
+    check('settings row label is Chinese',
+      registrations.some((r) => r.label === '壁纸背景 (Wallpaper Engine)'),
+      JSON.stringify(registrations.map((r) => r.label)));
+    if (langSelect) {
+      langSelect.props.onChange({ target: { value: 'en' } });
+      check('language choice persisted',
+        JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']).lang === 'en');
+      const enTree = pickerRenders[0]();
+      const enButtons = collectButtons(enTree);
+      check('switching to English renders English labels', enButtons.some((b) =>
+        Array.isArray(b.children) && b.children.includes('Refresh')));
+      check('Chinese labels gone after switch', !enButtons.some((b) =>
+        Array.isArray(b.children) && b.children.includes('刷新')));
     }
   }
 
