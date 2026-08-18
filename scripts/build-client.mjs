@@ -33,11 +33,11 @@ const id = pkg.name;
 const src = readFileSync(resolve(root, 'src', 'client.js'), 'utf8');
 const body = stripHeader(src).replace(/\r\n/g, '\n').replace(/\n+$/, '');
 
-if (body.includes('') && !body.includes('\\u0000')) {
-  // A literal NUL in the source would corrupt the envelope silently.
+// A literal NUL in the source would corrupt the envelope silently. (Written
+// via fromCharCode so this guard cannot be confused by escaping.)
+if (body.includes(String.fromCharCode(0))) {
   throw new Error('build-client: literal NUL byte in src/client.js — use \\u0000');
 }
-
 const outline = [
   'window.__ModuleLoader__.load({',
   `\tid: ${JSON.stringify(id)},`,
@@ -80,3 +80,4 @@ function stripHeader(srcText) {
   }
   return lines.slice(codeStart).join('\n');
 }
+

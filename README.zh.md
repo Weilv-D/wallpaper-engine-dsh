@@ -2,56 +2,16 @@
 
 [English](README.md) | [中文](README.zh.md)
 
-一个 DSH bundle：把本机 **Wallpaper Engine** 的 Video/Web 壁纸渲染成 **DSH web GUI(`dsh web`)的实时背景**——带交叉淡入过渡、iOS 风格液态玻璃效果、四个调节滑杆和用户自定义轮播列表。
+一个 DSH bundle：把本机 **Wallpaper Engine** 壁纸库变成 DSH web GUI(`dsh web`)的动态背景。视频壁纸在聊天界面背后播放，网页壁纸原地渲染，场景/应用壁纸以预览图作为静态背景——带交叉淡入、液态玻璃面板、轮播列表、搜索和资源监控。
 
-架构安全优先、测试兜底:
+## 功能
 
-- **纯逻辑层**(`lib/core.js`)—— VDF 解析、安装发现、路径约束，全部被单元测试覆盖。
-- **宿主层**(`lib/index.js`)—— Cordis 插件，通过同源 HTTP 提供清单与媒体。
-- **浏览器层**(`src/client.js` → `lib/client.js`)—— 界面背后渲染 + 设置面板。
-- **零模型 token** —— 不注册工具、不注入 prompt，纯 UI bundle。
-
-## 为什么只有 Video 和 Web 壁纸?
-
-| WE 类型 | 渲染方 | 可移植到 DSH? |
-|---|---|---|
-| **Scene** | WE 自有 3D 引擎 | ❌ 原生 shader/模型 |
-| **Video** | 普通媒体文件 | ✅ `<video>` 直接播放 |
-| **Web** | HTML + 资源 | ✅ 沙箱 `<iframe>` 加载 |
-| **Application** | 注入的外部窗口 | ❌ |
-
-与更简单的集成不同,**多文件 Web 壁纸在这里可以正常工作**:宿主会服务项目目录内打包的子资源(`js`/`css`/图片),并做严格的路径约束检查。
-
-## 架构
-
-```
-┌───────────────────────────── DSH web ─────────────────────────────┐
-│  浏览器半端(lib/client.js)                                       │
-│    settings.general.item 槽位 → 选择器 UI(网格、滑杆、列表)      │
-│    应用框架之下的固定层 → <video> / 沙箱 iframe                   │
-└──────────────▲────────────────────────────────────────────────────┘
-               │ 同源 HTTP
-┌──────────────┴────────────────────────────────────────────────────┐
-│  宿主半端(lib/index.js,Cordis 插件,inject: ['webServer'])       │
-│    GET /we-background/inventory[?refresh=1]  JSON,缓存 30 秒       │
-│    GET /we-background/media/<token>[/资源…]  Range + 路径约束      │
-│    GET /we-background/preview/<token>        预览图                │
-└──────────────▲────────────────────────────────────────────────────┘
-               │ 纯函数
-┌──────────────┴────────────────────────────────────────────────────┐
-│  核心层(lib/core.js)—— 有测试                                    │
-│    VDF 解析 · Steam 发现 · 项目校验 · 播放列表                    │
-│    Range 解析 · 路径约束 · MIME                                   │
-└───────────────────────────────────────────────────────────────────┘
-```
-
-## 安全模型
-
-- **随机 token,不是路径编码。** 媒体 URL 携带每次构建清单时铸造的 72 位随机 token;知道文件系统路径没有任何用处。重建清单会重新铸造全部 token,旧 URL 即刻失效。
-- **双重路径约束。** `project.json` 声明的文件必须解析在项目目录内;Web 壁纸的子资源同样必须解析在项目目录内(`..` 穿越返回 403)。
-- **Web 壁纸沙箱化。** 第三方壁纸 JS 运行在 `sandbox="allow-scripts"`(不含 `allow-same-origin`)且 `referrerpolicy="no-referrer"` 的 iframe 中——不透明源,无法触碰 DSH 的存储、Cookie 或 API。
-- **回环 + nosniff。** 全部响应同源,携带 `X-Content-Type-Options: nosniff`。
-- 只有被枚举过的文件可被服务,不存在任意文件路由。
+- **全库浏览** —— 视频与网页壁纸动态渲染；场景与应用壁纸显示预览图作为静态背景。凡是有预览图或可播放文件的壁纸都可选用，按类型标注角标（视频 / 网页 / 静态）。
+- **搜索** —— 按标题或创意工坊 ID 即时筛选网格。
+- **轮播列表** —— 可建任意多个列表，各自拥有壁纸集合、切换间隔（1–120 分钟）和顺序（顺序/随机）。首次运行自动导入第一个可播放的 Wallpaper Engine 播放列表，其余列表可随时导入。
+- **四个实时滑杆** —— 壁纸模糊、暗化、边框对比、玻璃磨砂，即时生效并持久保存。
+- **资源监控** —— 帧率读数与低帧率提示，页面隐藏或电量不足时自动暂停（均可开关）。
+- **交叉淡入** —— 切换与关闭都平滑过渡，不生硬跳变。
 
 ## 安装
 
@@ -59,31 +19,42 @@
 dsh plugin --profile web add wallpaper-engine-dsh
 ```
 
-或从源码检出安装:
+或从源码检出安装（便于开发，改动即时生效）:
 
 ```sh
 git clone https://github.com/Weilv-D/wallpaper-engine-dsh.git
 dsh plugin --profile web add link:<克隆文件夹的绝对路径>
 ```
 
-重启 `dsh web`,打开 **设置 → 通用 → 壁纸背景 (Wallpaper Engine)**。
+重启 `dsh web`，打开 **设置 → 通用 → 壁纸背景 (Wallpaper Engine)**。
 
 ## 使用
 
-1. 从缩略图网格选择 Video/Web 壁纸——它会在界面背后淡入。Scene/Application 类型无法嵌入,已从网格隐藏。
-2. **暂停/播放** 控制视频壁纸;**关闭** 清除壁纸;**刷新** 强制宿主重新扫描(新订阅的创意工坊壁纸无需刷新页面即可出现)。
-3. 四个滑杆实时调节融合效果:**壁纸模糊**(模糊壁纸本体)、**暗化**(文字遮罩)、**边框**(分隔线对比度)、**玻璃**(面板磨砂)。
-4. **轮播列表**:可建任意多个列表,各自拥有壁纸集合、切换间隔(1–120 分钟)和顺序(顺序/随机);在目标列表上开启 **自动轮转**。首次运行会自动导入第一个可播放的 WE 播放列表;编辑器里的 **从 WE 播放列表导入** 可拉入任意其他列表。
-5. 选择持久化在 `localStorage`。可自由切换 DSH 明暗主题——所有表面都读设计令牌,自动跟随;壁纸太花时调高 **暗化/边框** 直到文字清晰。
+1. 从缩略图网格选择壁纸，它会在界面背后淡入。壁纸库较大时用搜索框快速定位。
+2. **暂停/播放** 控制视频播放；**关闭** 淡出壁纸；**刷新** 重新扫描壁纸库，新订阅的创意工坊壁纸无需刷新页面即可出现。
+3. 用滑杆调节融合效果。壁纸太花时调高 **暗化** 和 **边框** 直到文字清晰；界面跟随 DSH 明暗主题自动适配。
+4. 用 **新建** 创建轮播列表，从网格挑选或导入 WE 播放列表，然后开启 **自动轮转**。
+5. 资源行显示当前帧率，并提供两个自动暂停开关。系统开启 `prefers-reduced-motion` 时视频默认暂停。
 
-尊重系统 `prefers-reduced-motion`:开启减弱动态效果时,视频壁纸默认暂停。
+选择持久化在浏览器的 `localStorage` 中。
+
+## 工作原理
+
+bundle 分为两半：
+
+- **宿主插件** 负责发现 Wallpaper Engine 安装位置（Steam 注册表项、`libraryfolders.vdf`、Windows/macOS/Linux 标准探测路径），从默认项目、我的项目和创意工坊目录枚举壁纸，并通过同源路由提供 JSON 清单与媒体数据：
+  - `GET /we-background/inventory[?refresh=1]`
+  - `GET /we-background/media/<token>[/资源…]` —— 支持 HTTP Range，视频可拖动进度；网页壁纸可加载其打包的子资源
+  - `GET /we-background/preview/<token>`
+- **浏览器插件** 把选中的壁纸渲染在应用框架之下的固定层，提供设置界面，所有视觉效果都读 DSH 设计令牌，主题切换自然生效。
+
+清单由宿主缓存 30 秒；安装发现只解析一次。本插件不注册模型工具，不占用 prompt。
 
 ## 限制
 
-- Scene 与 Application 壁纸无法嵌入浏览器(桌面渲染仍是 WE 的本职),已从选择器和轮播中隐藏。
-- 沙箱中的 Web 壁纸使用不透明源:依赖 `localStorage`/IndexedDB 跨加载持久化的壁纸无法保存状态。(刻意为之——否则同源壁纸 JS 可以驱动 DSH API。)
-- Steam 发现覆盖 Windows(注册表 + libraryfolders.vdf + 探测)、macOS 与 Linux(标准 Steam 目录)。非常规安装布局可能找不到。
-- 玻璃效果依托 DSH 设计令牌;若外壳重构重命名令牌,效果会优雅降级(透明度保留,模糊可能消失)。
+- 场景与应用壁纸以静态图呈现，其动态渲染仍是 Wallpaper Engine 桌面的职责。
+- 网页壁纸与页面存储隔离，需要跨加载保存状态的壁纸无法保留状态。
+- 玻璃效果读 DSH 设计令牌；若未来外壳重构重命名令牌，磨砂会退化为普通半透明。
 
 ## 开发
 
@@ -94,16 +65,12 @@ npm run build      # 从 src/client.js 重新生成 lib/client.js
 npm run verify     # 在 vm 沙箱中启动产物并断言行为
 ```
 
-`lib/core.js` 与 `lib/index.js` 是纯 ESM,无构建步骤。`lib/client.js` 是**编译产物**:请编辑 `src/client.js` 后重新构建。`npm run prepublishOnly` 会跑完整门禁:test → build → verify。
+目录结构：`lib/core.js`（纯逻辑，有测试）、`lib/index.js`（宿主插件）、`src/client.js`（浏览器源码）→ `lib/client.js`（构建产物，请勿手改）。`npm run prepublishOnly` 执行完整门禁：test → build → verify。
 
 ## 发布
 
-发布由 GitHub Actions(`.github/workflows/publish.yml`)通过 npm **Trusted Publishing(OIDC)**完成——任何地方都不存 npm token:
+发布由 GitHub Actions 通过 npm Trusted Publishing(OIDC，无需存储令牌）自动完成：
 
 1. 提升 `package.json` 的 `version` 并推送。
-2. 创建 tag 为 `v<版本号>` 的 GitHub Release(必须与 `package.json` 一致)。
-3. 工作流自动跑完整门禁、校验 tag ↔ 版本号,并带 `--provenance` 溯源发布。
-
-一次性配置(npm 网页端):包页面 → **Settings → Trusted Publisher → GitHub Actions**(仓库 `Weilv-D/wallpaper-engine-dsh`,workflow 填 `publish.yml`)。
-
-**首发引导**:Trusted Publisher 需要包已存在才能绑定,所以**第一个版本需手动发一次**——在你自己的终端里运行 `npm publish`(新版 npm 会拉起浏览器做人体验证),或在 npm 网页端创建带 publish 权限的 granular token 存入仓库密钥 `NPM_TOKEN` 并取消 `publish.yml` 末尾 env 块的注释。首发成功后绑定 Trusted Publisher,之后一切全自动。
+2. 创建 tag 为 `v<版本号>` 的 GitHub Release（必须与 `package.json` 一致）。
+3. 工作流自动跑门禁、校验版本，并带溯源信息发布。

@@ -2,57 +2,16 @@
 
 [English](README.md) | [中文](README.zh.md)
 
-A DSH bundle that renders your local **Wallpaper Engine** Video/Web wallpapers as the **live background of the DSH web GUI** (`dsh web`) — with crossfade transitions, an iOS-style liquid-glass treatment, four tuning sliders, and user-defined rotation lists.
+A DSH bundle that turns your local **Wallpaper Engine** library into the live background of the DSH web GUI (`dsh web`). Video wallpapers play behind the chat, web wallpapers render in place, and scene/application wallpapers join in as still images — with crossfade transitions, liquid-glass panels, rotation lists, search, and a resource monitor.
 
-Built with a security-first, test-backed architecture:
+## Features
 
-- **Pure logic layer** (`lib/core.js`) — VDF parsing, discovery, containment — covered by unit tests.
-- **Host layer** (`lib/index.js`) — Cordis plugin serving inventory + media over same-origin HTTP.
-- **Browser layer** (`src/client.js` → `lib/client.js`) — behind-body rendering + settings UI.
-- **Zero model tokens** — no tools, no prompt text; pure UI bundle.
-
-## Why only Video and Web wallpapers?
-
-| WE type | Rendered by | Portable to DSH? |
-|---|---|---|
-| **Scene** | WE's own 3D engine | ❌ native shaders/objects |
-| **Video** | a plain media file | ✅ plays in `<video>` |
-| **Web** | HTML + assets | ✅ loads in a sandboxed `<iframe>` |
-| **Application** | an injected external window | ❌ |
-
-Unlike simpler integrations, **multi-file Web wallpapers work here**: the host serves a wallpaper's bundled sub-assets (`js`/`css`/images) from inside its project directory, with strict containment checks.
-
-## Architecture
-
-```
-┌───────────────────────────── DSH web ─────────────────────────────┐
-│  Browser half (lib/client.js)                                     │
-│    settings.general.item slot → picker UI (grid, sliders, lists)  │
-│    fixed layer behind the app frame → <video> / sandboxed iframe  │
-└──────────────▲────────────────────────────────────────────────────┘
-               │ same-origin HTTP
-┌──────────────┴────────────────────────────────────────────────────┐
-│  Host half (lib/index.js, Cordis plugin, inject: ['webServer'])    │
-│    GET /we-background/inventory[?refresh=1]  JSON + cached 30 s    │
-│    GET /we-background/media/<token>[/asset…] Range + containment   │
-│    GET /we-background/preview/<token>        preview image         │
-└──────────────▲────────────────────────────────────────────────────┘
-               │ pure functions
-┌──────────────┴────────────────────────────────────────────────────┐
-│  Core (lib/core.js) — tested                                      │
-│    VDF parser · Steam discovery · project validation · playlists  │
-│    Range parsing · path containment · MIME                        │
-└───────────────────────────────────────────────────────────────────┘
-```
-
-## Security model
-
-- **Random tokens, not encoded paths.** Media URLs carry a 72-bit random token minted per inventory build; knowing a filesystem path grants nothing. Rebuilding the inventory re-mints every token.
-- **Double containment.** `project.json`-declared files must resolve inside their project directory, and web-wallpaper sub-assets must resolve inside the project dir (`..` → 403).
-- **Sandboxed web wallpapers.** Third-party wallpaper JS runs in an iframe with `sandbox="allow-scripts"` (no `allow-same-origin`) and `referrerpolicy="no-referrer"` — an opaque origin that cannot touch DSH storage, cookies, or APIs.
-- **Loopback + nosniff.** All responses are same-origin with `X-Content-Type-Options: nosniff`.
-- Only enumerated files are ever served; there is no arbitrary-file route.
-- **LAN note:** if you bind `dsh web` beyond loopback, `/we-background/*` (inventory JSON incl. install paths + wallpaper media) becomes reachable on that interface too. Media is gated by unguessable tokens, but the inventory itself is not authenticated — intended for a personal loopback setup.
+- **Whole-library browsing** — video and web wallpapers render live; scene and application wallpapers show their preview as a static background. Everything with a preview or playable file is selectable, badged by type (视频 / 网页 / 静态).
+- **Search** — filter the grid instantly by title or workshop id.
+- **Rotation lists** — any number of carousel lists, each with its own wallpapers, interval (1–120 min) and order (sequence/random). Your first playable Wallpaper Engine playlist is imported automatically; others can be imported into any list.
+- **Four live sliders** — wallpaper blur, scrim, border contrast, and glass frosting, all instant and persisted.
+- **Resource monitor** — FPS readout with a low-framerate hint, plus auto-pause when the tab is hidden or the battery runs low (both optional).
+- **Crossfade** — wallpaper switches and clearing fade smoothly instead of snapping.
 
 ## Install
 
@@ -60,7 +19,7 @@ Unlike simpler integrations, **multi-file Web wallpapers work here**: the host s
 dsh plugin --profile web add wallpaper-engine-dsh
 ```
 
-or from a checkout:
+Or from a checkout (live-linked for development):
 
 ```sh
 git clone https://github.com/Weilv-D/wallpaper-engine-dsh.git
@@ -71,40 +30,47 @@ Restart `dsh web`, then open **Settings → General → 壁纸背景 (Wallpaper 
 
 ## Usage
 
-1. Pick a Video/Web wallpaper from the thumbnail grid — it crossfades in behind the app. Scene/Application wallpapers are not embeddable and are hidden.
-2. **暂停/播放** pauses a video wallpaper; **关闭** clears it; **刷新** forces the host to rescan (new Workshop subscriptions appear without a page reload).
-3. Four sliders tune the blend live: **壁纸模糊** (blur the wallpaper itself), **暗化** (scrim), **边框** (hairline contrast), **玻璃** (frosted-glass panels).
-4. **轮播列表**: create any number of rotation lists, each with its own wallpapers, interval (1–120 min) and order (顺序/随机); enable **自动轮转** on one. On first run, your first playable WE playlist is imported automatically; **从 WE 播放列表导入** pulls any other playlist into the editor.
-5. The choice persists in `localStorage`. Switch DSH between light/dark themes freely — every surface reads design tokens and follows along; on busy wallpapers raise **暗化/边框** until text is comfortable.
+1. Pick a wallpaper from the thumbnail grid — it fades in behind the app. Use the search box to narrow large libraries.
+2. **暂停/播放** controls video playback; **关闭** fades the wallpaper out; **刷新** rescans the library (new workshop subscriptions appear without reloading the page).
+3. Tune the blend with the sliders. On busy wallpapers, raise **暗化** and **边框** until text is comfortable; the UI follows DSH's light/dark theme automatically.
+4. Create rotation lists with **新建**, fill them from the grid or import a WE playlist, then enable **自动轮转**.
+5. The resource row shows the current frame rate and offers two auto-pause switches. `prefers-reduced-motion` starts videos paused.
 
-`prefers-reduced-motion` is respected: video wallpapers start paused.
+Your selection persists in the browser's `localStorage`.
+
+## How it works
+
+The bundle has two halves:
+
+- A **host plugin** discovers the Wallpaper Engine install (Steam registry entry, `libraryfolders.vdf`, standard probe paths across Windows/macOS/Linux), enumerates projects from the default/my-projects folders and the workshop, and serves a JSON inventory plus the media bytes over same-origin routes:
+  - `GET /we-background/inventory[?refresh=1]`
+  - `GET /we-background/media/<token>[/asset…]` — with HTTP Range support for video seeking; web wallpapers can fetch their bundled sub-assets
+  - `GET /we-background/preview/<token>`
+- A **browser plugin** renders the chosen wallpaper on a fixed layer behind the app frame, contributes the settings UI, and keeps every effect on DSH design tokens so themes apply cleanly.
+
+The host answers from a 30-second inventory cache; discovery is resolved once at startup and reused. The bundle registers no model tools and adds no prompt text.
 
 ## Limitations
 
-- Scene and Application wallpapers cannot be embedded in a browser (they stay WE's desktop job) — hidden from picker and rotation.
-- Sandboxed web wallpapers get an opaque origin: wallpapers that need `localStorage`/IndexedDB persistence across loads won't persist. (Deliberate — same-origin wallpaper JS could otherwise drive the DSH API.)
-- Steam discovery covers Windows (registry + libraryfolders.vdf + probes), macOS and Linux (standard Steam roots). Exotic layouts may not be found.
-- The glass effect rides DSH design tokens; a shell redesign that renames tokens degrades the frosting gracefully (transparency stays, blur may drop).
+- Scene and application wallpapers render as still images; their live animation remains Wallpaper Engine's desktop job.
+- Web wallpapers run isolated from the page's storage, so ones that persist state across loads won't keep it.
+- The glass effect reads DSH design tokens; if a future shell redesign renames them, frosting degrades to plain transparency.
 
 ## Development
 
 ```sh
-npm install        # prepare hook builds lib/client.js automatically
-npm test           # unit tests: pure core parsing + inventory assembly (node:test)
+npm install        # builds lib/client.js via the prepare hook
+npm test           # unit tests for the pure core (node:test)
 npm run build      # regenerate lib/client.js from src/client.js
 npm run verify     # boot the emitted bundle in a vm sandbox and assert behaviour
 ```
 
-The test suite covers the parser, discovery helpers, path containment, playlist resolution, Range parsing, **and the inventory assembly the host serves over HTTP** (against fixture trees with a token-mint spy).
-
-`lib/core.js` and `lib/index.js` are plain ESM — no build step. `lib/client.js` is a **compiled artifact**; edit `src/client.js` and rebuild. `npm run prepublishOnly` runs the full gate: test → build → verify.
+Layout: `lib/core.js` (pure, tested logic), `lib/index.js` (host plugin), `src/client.js` (browser source) → `lib/client.js` (built artifact; do not hand-edit). `npm run prepublishOnly` runs the full gate: test → build → verify.
 
 ## Releasing
 
-Publishing runs in GitHub Actions (`.github/workflows/publish.yml`) through npm **Trusted Publishing (OIDC)** — no npm token is stored anywhere:
+Releases publish automatically via GitHub Actions and npm Trusted Publishing (OIDC, no stored tokens):
 
 1. Bump `version` in `package.json` and push.
-2. Create a GitHub Release whose tag is `v<version>` (must match `package.json`).
-3. The workflow runs the full gate, asserts tag ↔ version, and publishes with `--provenance`.
-
-One-time npm setup: package → **Settings → Trusted Publisher → GitHub Actions** (repo `Weilv-D/wallpaper-engine-dsh`, workflow `publish.yml`). The very first version must be published manually once (see README.zh.md §发布 for details) before trusted publishing can be linked.
+2. Create a GitHub Release tagged `v<version>` (must match `package.json`).
+3. The workflow runs the gate, verifies tag ↔ version, and publishes with provenance.
