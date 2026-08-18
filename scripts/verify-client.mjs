@@ -62,7 +62,16 @@ function makeEl(tag) {
     },
     get id() { return el._id; },
     set id(v) { el._id = String(v); },
-    appendChild(c) { el.children.push(c); c._parent = el; return c; },
+    appendChild(c) {
+      // Real-DOM semantics: appending DETACHES from the previous parent
+      // (moving a node). Without this, adjust-mode's layer relocation left
+      // stale copies in two children arrays.
+      if (c._parent) {
+        const i = c._parent.children.indexOf(c);
+        if (i >= 0) c._parent.children.splice(i, 1);
+      }
+      el.children.push(c); c._parent = el; return c;
+    },
     remove() {
       const p = el._parent;
       if (p) {
@@ -74,8 +83,11 @@ function makeEl(tag) {
     setAttribute(k, v) { el.attributes[k] = String(v); },
     hasAttribute(k) { return Object.prototype.hasOwnProperty.call(el.attributes, k); },
     removeAttribute(k) { if (k === 'id') el._id = ''; delete el.attributes[k]; },
-    addEventListener() {},
-    removeEventListener() {},
+    // Record the last listener per type so tests can fire real handlers
+    // (adjust-overlay Done button, pointer pan, keydown Esc).
+    addEventListener(type, fn) { el._listeners = el._listeners || {}; el._listeners[type] = fn; },
+    removeEventListener(type) { if (el._listeners) delete el._listeners[type]; },
+    contains(node) { return walkAll(el, []).includes(node); },
     play() { el.playCalled = (el.playCalled || 0) + 1; return { catch() {} }; },
     pause() { el.pauseCalled = (el.pauseCalled || 0) + 1; },
     querySelector(sel) {
@@ -164,7 +176,7 @@ const fetchMock = (url) => {
         { id: 'a', title: 'Video A', type: 'video', playable: true, media: `/we-background/media/tokA-${n}`, preview: null },
         { id: 'b', title: 'Web B', type: 'web', playable: true, media: `/we-background/media/tokB-${n}`, preview: null },
         { id: 'c', title: 'Scene C', type: 'scene', playable: false, media: null, preview: null },
-        { id: 'd', title: 'Scene D', type: 'scene', playable: false, media: null, preview: `/we-background/preview/tokD-${n}` },
+        { id: 'd', title: 'Scene D', type: 'scene', playable: false, media: null, preview: `/we-background/preview/tokD-${n}`, previewW: 320, previewH: 320 },
       ],
     }),
   });
@@ -273,6 +285,10 @@ setTimeout(async () => {
     props['--webg-scrim-color']);
   check('glass blur css var default', props['--webg-blur'] === '16px', props['--webg-blur']);
   check('wallpaper blur css var default', props['--webg-wallpaper-blur'] === '0px');
+  check('media filter is none at zero blur (bit-exact pixels)', props['--webg-media-filter'] === 'none',
+    props['--webg-media-filter']);
+  check('noise overlay hidden at zero blur', props['--webg-noise-display'] === 'none',
+    props['--webg-noise-display']);
 
   // Rotation: 5-minute timer from the group, fires → 'b' (web wallpaper).
   const rotationTimer = timers.find((t) => !t.cleared && t.ms === 300000);
@@ -344,16 +360,17 @@ setTimeout(async () => {
       check('no leftover leaving layers after refresh', documentMock.querySelectorAll('.webg-layer').length === 1);
     }
 
-    // Canvas fit/position controls (video wallpaper → row is rendered).
+    // Canvas fit + manual crop controls (video wallpaper → row is rendered).
     const fitSelect = collectSelects(tree).find((s) =>
       String(s.props.className || '').includes('webg-fit-select'));
-    const posSelect = collectSelects(tree).find((s) =>
-      String(s.props.className || '').includes('webg-position-select'));
-    check('fit + position selects present for video wallpaper', Boolean(fitSelect && posSelect));
+    const adjustBtn = buttons.find((b) =>
+      Array.isArray(b.children) && b.children.includes('调整画面'));
+    check('fit select + adjust button present (no position select)', Boolean(fitSelect && adjustBtn));
     check('fit defaults to cover', bodyEl.style._props['--webg-fit'] === 'cover',
       bodyEl.style._props['--webg-fit']);
-    check('position defaults to center', bodyEl.style._props['--webg-position'] === 'center',
-      bodyEl.style._props['--webg-position']);
+    check('zoom defaults to 1 with no offsets', bodyEl.style._props['--webg-zoom'] === '1' &&
+      bodyEl.style._props['--webg-offset-x'] === '0%' && bodyEl.style._props['--webg-offset-y'] === '0%',
+      JSON.stringify([bodyEl.style._props['--webg-zoom'], bodyEl.style._props['--webg-offset-x']]));
     if (fitSelect) {
       fitSelect.props.onChange({ target: { value: 'contain' } });
       check('fit switch applies immediately', bodyEl.style._props['--webg-fit'] === 'contain',
@@ -361,10 +378,32 @@ setTimeout(async () => {
       check('fit persisted',
         JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']).fit === 'contain');
     }
-    if (posSelect) {
-      posSelect.props.onChange({ target: { value: 'top' } });
-      check('position switch applies immediately', bodyEl.style._props['--webg-position'] === 'top',
-        bodyEl.style._props['--webg-position']);
+
+    // Manual crop: adjust overlay takes the LIVE layer; done puts it back.
+    if (adjustBtn) {
+      const layerBefore = documentMock.getElementById('wallpaper-engine-dsh-layer');
+      adjustBtn.props.onClick();
+      const overlay = documentMock.body.children.find((c) => c._classes && c._classes.has('webg-adjust'));
+      check('adjust overlay opens with the live layer inside',
+        Boolean(overlay) && overlay.children[0] === layerBefore);
+      const bar = overlay && overlay.children.find((c) => c._classes && c._classes.has('webg-adjust-bar'));
+      const doneBtn = bar && bar.children.find((c) => c.tagName === 'BUTTON');
+      check('adjust bar has a Done button', Boolean(doneBtn));
+      if (doneBtn && doneBtn._listeners && doneBtn._listeners.click) {
+        // Simulate a pan through the recorded pointer handlers.
+        if (overlay._listeners && overlay._listeners.pointerdown && overlay._listeners.pointermove &&
+            overlay._listeners.pointerup) {
+          overlay._listeners.pointerdown({ clientX: 500, clientY: 300, target: overlay });
+          overlay._listeners.pointermove({ clientX: 560, clientY: 300 });
+          overlay._listeners.pointerup({});
+          check('drag pans the crop (offsets persisted)',
+            JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']).offsetX > 0);
+        }
+        doneBtn._listeners.click();
+        check('done closes the overlay and returns the layer',
+          !documentMock.body.children.some((c) => c._classes && c._classes.has('webg-adjust')) &&
+            documentMock.getElementById('wallpaper-engine-dsh-layer') === layerBefore);
+      }
     }
 
     // Play/pause: drives the real video element, not just the label.
@@ -417,12 +456,24 @@ setTimeout(async () => {
     // Static wallpaper: selecting scene D renders its preview as an <img>.
     const staticCard = cards.find((b) => b.props.title === 'Scene D(静态)');
     if (staticCard) {
+      // Ambient engages only under cover fit — restore it (an earlier block
+      // switched to contain for the fit test).
+      if (fitSelect) fitSelect.props.onChange({ target: { value: 'cover' } });
       staticCard.props.onClick();
       const staticLayer = documentMock.getElementById('wallpaper-engine-dsh-layer');
-      const img = staticLayer && staticLayer.children[0];
-      check('static wallpaper renders as an image', img && img.tagName === 'IMG', img && img.tagName);
-      check('static wallpaper uses the preview url', img && /\/preview\//.test(img.src || ''), img && img.src);
-      check('static image carries no sandbox/iframe semantics', img && !img.attributes.sandbox);
+      const node = staticLayer && staticLayer.children[0];
+      check('low-res scene card shows the 低清 badge', JSON.stringify(cards).includes('低清'));
+      // previewW 320 < 1200 → ambient: wrapper div with blurred bg + sharp fg.
+      check('low-res static renders ambient (blurred bg + sharp fg)',
+        Boolean(node) && node.tagName === 'DIV' &&
+          String(node.className).includes('webg-ambient') &&
+          node.children.length === 2 &&
+          node.children.every((c) => c.tagName === 'IMG'),
+        node && node.tagName + '/' + node.children.length);
+      if (node && node.children.length === 2) {
+        check('ambient fg uses the preview url', /\/preview\//.test(node.children[1].src || ''));
+        check('ambient fg carries no sandbox/iframe semantics', !node.children[1].attributes.sandbox);
+      }
     }
 
     // Clear: graceful fade — scrim/attr outlive the layer until the fade ends.

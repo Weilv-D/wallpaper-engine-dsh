@@ -418,3 +418,65 @@ test('buildInventoryFrom: missing install yields empty structure, not an error',
   assert.equal(inv.total, 0);
   assert.equal(inv.portableCount, 0);
 });
+
+// ── Image dimension sniffing ─────────────────────────────────────────────────
+
+/** Minimal PNG: signature + IHDR with big-endian width/height. */
+function pngBytes(w, h) {
+  const b = Buffer.alloc(24);
+  Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]).copy(b, 0);
+  b.writeUInt32BE(13, 8); // chunk length
+  b.write('IHDR', 12, 'latin1');
+  b.writeUInt32BE(w, 16);
+  b.writeUInt32BE(h, 20);
+  return b;
+}
+
+/** Minimal JPEG: SOI + SOF0 carrying height/width. */
+function jpegBytes(w, h) {
+  const b = Buffer.alloc(20);
+  b[0] = 0xFF; b[1] = 0xD8;
+  b[2] = 0xFF; b[3] = 0xC0; // SOF0
+  b.writeUInt16BE(0x11, 4); // segment length
+  b[6] = 0x08; // precision
+  b.writeUInt16BE(h, 7);
+  b.writeUInt16BE(w, 9);
+  return b;
+}
+
+test('sniffImageSize: PNG, JPEG, GIF headers; garbage is null', () => {
+  assert.deepEqual(core.sniffImageSize(pngBytes(1920, 1080)), { w: 1920, h: 1080 });
+  assert.deepEqual(core.sniffImageSize(jpegBytes(1536, 1024)), { w: 1536, h: 1024 });
+  const gif = Buffer.alloc(24);
+  Buffer.from('GIF89a', 'latin1').copy(gif, 0);
+  gif.writeUInt16LE(320, 6);
+  gif.writeUInt16LE(240, 8);
+  assert.deepEqual(core.sniffImageSize(gif), { w: 320, h: 240 });
+  assert.equal(core.sniffImageSize(Buffer.from('not an image at all……')), null);
+  assert.equal(core.sniffImageSize(null), null);
+});
+
+test('buildInventoryFrom: scene previews carry sniffed dimensions', async () => {
+  await withTemp(async (tmp) => {
+    const dir = join(tmp, 'steamapps', 'workshop', 'content', '431960', 'sc1');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'project.json'), JSON.stringify({
+      title: 'Tiny', type: 'scene', file: 'scene.pkg', preview: 'p.jpg',
+    }));
+    writeFileSync(join(dir, 'p.jpg'), jpegBytes(256, 256));
+    const inv = await core.buildInventoryFrom(
+      { installDir: null, libraryRoots: [tmp] },
+      { mint: () => 't', readBuffer: async () => jpegBytes(256, 256) },
+    );
+    const sc = inv.wallpapers.find((w) => w.id === 'sc1');
+    assert.ok(sc);
+    assert.equal(sc.previewW, 256);
+    assert.equal(sc.previewH, 256);
+    // Without readBuffer (io too old / not injected) the fields are null.
+    const inv2 = await core.buildInventoryFrom(
+      { installDir: null, libraryRoots: [tmp] },
+      { mint: () => 't' },
+    );
+    assert.equal(inv2.wallpapers.find((w) => w.id === 'sc1').previewW, null);
+  });
+});
