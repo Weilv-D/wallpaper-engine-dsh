@@ -10,6 +10,7 @@ A DSH bundle that turns your local **Wallpaper Engine** library into the live ba
 - **Search** — filter the grid instantly by title or workshop id.
 - **Rotation lists** — any number of carousel lists, each with its own wallpapers, interval (1–120 min) and order (sequence/random). Your first playable Wallpaper Engine playlist is imported automatically; others can be imported into any list.
 - **Four live sliders** — Wallpaper blur, Scrim, Borders, Glass — all instant and persisted.
+- **Legibility on any wallpaper** — the veil opposes the text colour (white veil in light theme, black in dark) and a Smart veil toggle samples the wallpaper's brightness every few seconds, automatically strengthening the veil when a scene gets too bright or too dark for the current theme. Dropdowns, menus, and dialogs keep DSH's opaque surfaces untouched.
 - **Canvas fit** — Cover/Contain/Stretch/Original sizing plus five-way alignment for video and still wallpapers.
 - **Resource monitor** — FPS readout with a low-framerate hint, plus auto-pause when the tab is hidden or the battery runs low (both optional).
 - **Bilingual** — the settings UI follows the shell's Language preference (Chinese/English), with a manual override in the picker.

@@ -99,6 +99,8 @@ const STRINGS = {
     glass: "玻璃",
     pauseOnHidden: "页面隐藏时暂停",
     pauseOnBattery: "低电量时暂停",
+    autoScrim: "智能可视",
+    autoScrimTitle: "采样壁纸亮度,过亮或过暗时自动加强遮罩,保证文字可读",
     fpsTitle: "页面当前渲染帧率",
     lowFpsHint: "帧率偏低,可尝试暂停视频、增大壁纸模糊或换用静态壁纸",
     language: "语言",
@@ -177,6 +179,8 @@ const STRINGS = {
     glass: "Glass",
     pauseOnHidden: "Pause when tab hidden",
     pauseOnBattery: "Pause on low battery",
+    autoScrim: "Smart veil",
+    autoScrimTitle: "Samples wallpaper brightness and strengthens the veil when needed so text stays readable",
     fpsTitle: "Current page frame rate",
     lowFpsHint: "Low frame rate — try pausing the video, raising wallpaper blur, or using a still wallpaper",
     language: "Language",
@@ -238,6 +242,7 @@ const DEFAULTS = {
   rotationSeeded: false,
   pauseOnHidden: true,
   pauseOnBattery: true,
+  autoScrim: true,
   lang: "auto",
   fit: "cover",
   position: "center",
@@ -288,6 +293,7 @@ function readPersisted() {
       rotationSeeded: o.rotationSeeded === true,
       pauseOnHidden: o.pauseOnHidden !== false,
       pauseOnBattery: o.pauseOnBattery !== false,
+      autoScrim: o.autoScrim !== false,
       lang: o.lang === "zh" || o.lang === "en" ? o.lang : "auto",
       fit: FIT_MODES.indexOf(o.fit) >= 0 ? o.fit : DEFAULTS.fit,
       position: POSITIONS.indexOf(o.position) >= 0 ? o.position : DEFAULTS.position,
@@ -339,6 +345,7 @@ function persistSelection() {
       rotationSeeded: selection.rotationSeeded,
       pauseOnHidden: selection.pauseOnHidden,
       pauseOnBattery: selection.pauseOnBattery,
+      autoScrim: selection.autoScrim,
       lang: selection.lang,
       fit: selection.fit,
       position: selection.position,
@@ -680,6 +687,14 @@ function buildMedia(sel) {
     media.setAttribute("decoding", "async");
     media.className = "webg-media";
   }
+  // First luminance sample as soon as the frame is decodable (video/still
+  // only — iframe contents are opaque to us). Later samples ride the timer.
+  if (sel.type === "video" || sel.type === "image") {
+    media.addEventListener(sel.type === "video" ? "loadeddata" : "load", () => {
+      sampleWallpaperLuminance();
+      applyEffects();
+    });
+  }
   media.addEventListener("error", () => {
     const id = sel.id;
     const count = (mediaFailures.get(id) || 0) + 1;
@@ -785,9 +800,52 @@ function syncLayers() {
 }
 
 // ── Effect application: push the knobs into CSS variables ───────────────────
+// Wallpaper luminance sampled from the live media (null until the first
+// sample; iframes of web wallpapers can never be sampled — opaque origin).
+let sampledLuminance = null;
+let sampleCanvas = null;
+
+/** Average Rec.601 luminance (0..1) of the current video/img, or null. */
+function sampleWallpaperLuminance() {
+  if (typeof document === "undefined") return;
+  const layer = document.getElementById(LAYER_ID);
+  const media = layer && (layer.querySelector("video") || layer.querySelector("img"));
+  if (!media) { sampledLuminance = null; return; }
+  try {
+    if (!sampleCanvas) {
+      const c = document.createElement("canvas");
+      if (typeof c.getContext !== "function") return; // no canvas → no sampling
+      c.width = 16; c.height = 16;
+      sampleCanvas = c;
+    }
+    const g = sampleCanvas.getContext("2d", { willReadFrequently: true });
+    g.drawImage(media, 0, 0, 16, 16);
+    const d = g.getImageData(0, 0, 16, 16).data;
+    let sum = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      sum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    }
+    sampledLuminance = sum / (d.length / 4) / 255;
+  } catch { /* frame not ready / unreadable → keep the previous sample */ }
+}
+
 function applyEffects() {
   const s = document.body.style;
-  s.setProperty("--webg-scrim-color", "rgba(0,0,0," + selection.scrim + ")");
+  // The veil OPPOSES the text colour: dark theme (light text) darkens bright
+  // wallpapers, light theme (dark text) brightens dark ones — either way the
+  // text side wins. This is what makes ANY wallpaper survivable.
+  const dark = Boolean(document.body.hasAttribute && document.body.hasAttribute("data-ds-dark-theme"));
+  let alpha = selection.scrim;
+  if (selection.autoScrim && sampledLuminance !== null) {
+    // Distance of the wallpaper's brightness from the "comfortable middle"
+    // towards the text colour's weakness, mapped to a veil-alpha floor.
+    const need = dark
+      ? Math.min(0.55, Math.max(0, sampledLuminance - 0.5))
+      : Math.min(0.55, Math.max(0, 0.5 - sampledLuminance));
+    alpha = Math.max(alpha, Math.round(need * 1000) / 1000);
+  }
+  const veilColor = "rgba(" + (dark ? "0,0,0" : "255,255,255") + "," + alpha + ")";
+  s.setProperty("--webg-scrim-color", veilColor);
   s.setProperty("--webg-border-alpha", String(selection.border));
   s.setProperty("--webg-blur", selection.blur + "px");
   // The glass "colour melt" scales with blur radius: 0 blur → no melt.
@@ -805,7 +863,7 @@ function applyEffects() {
   // Write the scrim colour directly too, then force a synchronous layout, so
   // slider feedback lands on this frame even on stalled compositors.
   const scrim = document.getElementById(SCRIM_ID);
-  if (scrim) scrim.style.background = "rgba(0,0,0," + selection.scrim + ")";
+  if (scrim) scrim.style.background = veilColor;
   if (document.body && document.body.offsetHeight !== undefined) {
     void document.body.offsetHeight;
   }
@@ -965,6 +1023,12 @@ function WallpaperPicker() {
     if (selection.pauseOnBattery) applyBatteryPause(); // re-evaluate NOW
     else setAutoPause("battery", false);
     persistSelection();
+    emit();
+  };
+  const onToggleAutoScrim = () => {
+    selection.autoScrim = !selection.autoScrim;
+    persistSelection();
+    applyEffects();
     emit();
   };
 
@@ -1261,6 +1325,12 @@ function WallpaperPicker() {
           type: "checkbox", checked: sel.pauseOnBattery, onChange: onTogglePauseOnBattery,
         }),
         t.pauseOnBattery,
+      ),
+      React.createElement("label", { className: "webg-toggle", title: t.autoScrimTitle },
+        React.createElement("input", {
+          type: "checkbox", checked: sel.autoScrim, onChange: onToggleAutoScrim,
+        }),
+        t.autoScrim,
       ),
       sel.fps !== null && React.createElement("span", {
         className: "webg-hint webg-fps" + (sel.fps < LOW_FPS ? " webg-fps--low" : ""),
@@ -1632,9 +1702,28 @@ function apply(ctx) {
       const unsubEffects = subscribe(applyEffects);
       syncLayers();
       applyEffects();
+      // Luminance sampler: re-reads the wallpaper periodically so a bright
+      // scene arriving mid-video re-raises the veil. (rAF-free: 2.5 s is
+      // plenty for legibility, and an idle timer costs ~nothing.)
+      let samplerId = null;
+      if (typeof window !== "undefined" && typeof window.setInterval === "function") {
+        samplerId = window.setInterval(() => {
+          sampleWallpaperLuminance();
+          applyEffects();
+        }, 2500);
+      }
+      // A theme switch flips the veil colour immediately (black ↔ white).
+      let observer = null;
+      if (typeof MutationObserver === "function") {
+        observer = new MutationObserver(() => applyEffects());
+        observer.observe(document.body, { attributes: true, attributeFilter: ["data-ds-dark-theme"] });
+      }
       return () => {
         unsubLayers();
         unsubEffects();
+        if (samplerId !== null) window.clearInterval(samplerId);
+        if (observer) observer.disconnect();
+        sampledLuminance = null;
         clearRotationTimer();
         // Cancel pending crossfade/clear timers so they never fire on
         // torn-down nodes after dispose.

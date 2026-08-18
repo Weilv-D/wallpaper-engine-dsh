@@ -72,6 +72,7 @@ function makeEl(tag) {
       }
     },
     setAttribute(k, v) { el.attributes[k] = String(v); },
+    hasAttribute(k) { return Object.prototype.hasOwnProperty.call(el.attributes, k); },
     removeAttribute(k) { if (k === 'id') el._id = ''; delete el.attributes[k]; },
     addEventListener() {},
     removeEventListener() {},
@@ -266,7 +267,10 @@ setTimeout(async () => {
   check('body active attribute set', bodyEl.attributes['data-webg-wallpaper'] === 'on');
 
   const props = bodyEl.style._props;
-  check('scrim css var default', props['--webg-scrim-color'] === 'rgba(0,0,0,0.25)', props['--webg-scrim-color']);
+  // The veil OPPOSES the text colour: light theme (dark text) veils WHITE,
+  // dark theme (light text) veils BLACK — readable over any wallpaper.
+  check('scrim veil is white in light theme', props['--webg-scrim-color'] === 'rgba(255,255,255,0.25)',
+    props['--webg-scrim-color']);
   check('glass blur css var default', props['--webg-blur'] === '16px', props['--webg-blur']);
   check('wallpaper blur css var default', props['--webg-wallpaper-blur'] === '0px');
 
@@ -381,6 +385,34 @@ setTimeout(async () => {
         check('resuming calls video.play() again', videoEl.playCalled >= 2, String(videoEl.playCalled));
       }
     }
+
+    // Veil theme flip via the scrim slider (its onInput calls applyEffects
+    // directly): the veil is white in light theme, black in dark theme.
+    const sliders = (function collect(t, out) {
+      (function walk(node) {
+        if (Array.isArray(node)) { node.forEach(walk); return; }
+        if (!node || typeof node !== 'object') return;
+        if (node.type === 'input' && node.props && node.props.type === 'range') out.push(node);
+        if (Array.isArray(node.children)) node.children.forEach(walk);
+      })(t);
+      return out;
+    })(tree, []);
+    check('four sliders rendered', sliders.length === 4, sliders.length);
+    if (sliders.length === 4) {
+      const scrimSlider = sliders[1]; // 壁纸模糊, 暗化, 边框, 玻璃
+      bodyEl.setAttribute('data-ds-dark-theme', '');
+      scrimSlider.props.onInput({ target: { value: '25', style: { setProperty() {} } } });
+      check('veil flips to black in dark theme',
+        bodyEl.style._props['--webg-scrim-color'] === 'rgba(0,0,0,0.25)',
+        bodyEl.style._props['--webg-scrim-color']);
+      bodyEl.removeAttribute('data-ds-dark-theme');
+      scrimSlider.props.onInput({ target: { value: '25', style: { setProperty() {} } } });
+      check('veil returns to white in light theme',
+        bodyEl.style._props['--webg-scrim-color'] === 'rgba(255,255,255,0.25)');
+    }
+
+    // Smart veil toggle present in the monitor row.
+    check('smart veil toggle present', JSON.stringify(tree).includes('智能可视'));
 
     // Static wallpaper: selecting scene D renders its preview as an <img>.
     const staticCard = cards.find((b) => b.props.title === 'Scene D(静态)');
