@@ -322,6 +322,29 @@ setTimeout(async () => {
       check('no leftover leaving layers after refresh', documentMock.querySelectorAll('.webg-layer').length === 1);
     }
 
+    // Canvas fit/position controls (video wallpaper → row is rendered).
+    const fitSelect = collectSelects(tree).find((s) =>
+      String(s.props.className || '').includes('webg-fit-select'));
+    const posSelect = collectSelects(tree).find((s) =>
+      String(s.props.className || '').includes('webg-position-select'));
+    check('fit + position selects present for video wallpaper', Boolean(fitSelect && posSelect));
+    check('fit defaults to cover', bodyEl.style._props['--webg-fit'] === 'cover',
+      bodyEl.style._props['--webg-fit']);
+    check('position defaults to center', bodyEl.style._props['--webg-position'] === 'center',
+      bodyEl.style._props['--webg-position']);
+    if (fitSelect) {
+      fitSelect.props.onChange({ target: { value: 'contain' } });
+      check('fit switch applies immediately', bodyEl.style._props['--webg-fit'] === 'contain',
+        bodyEl.style._props['--webg-fit']);
+      check('fit persisted',
+        JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']).fit === 'contain');
+    }
+    if (posSelect) {
+      posSelect.props.onChange({ target: { value: 'top' } });
+      check('position switch applies immediately', bodyEl.style._props['--webg-position'] === 'top',
+        bodyEl.style._props['--webg-position']);
+    }
+
     // Static wallpaper: selecting scene D renders its preview as an <img>.
     const staticCard = cards.find((b) => b.props.title === 'Scene D(静态)');
     if (staticCard) {

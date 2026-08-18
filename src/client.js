@@ -21,6 +21,8 @@
  *   7. Bilingual UI (中文/English): follows the DSH shell's Language setting
  *      (locale service + locale/change event), with a manual override that
  *      persists; falls back to the browser language.
+ *   8. Canvas fit controls (排布/对齐): object-fit + object-position for
+ *      video and still wallpapers.
  */
 
 const React = require("react");
@@ -101,6 +103,17 @@ const STRINGS = {
     lowFpsHint: "帧率偏低,可尝试暂停视频、增大壁纸模糊或换用静态壁纸",
     language: "语言",
     langAuto: "自动",
+    fit: "排布",
+    fitCover: "填充",
+    fitContain: "适应",
+    fitFill: "拉伸",
+    fitNone: "原始",
+    position: "对齐",
+    posCenter: "居中",
+    posTop: "顶部",
+    posBottom: "底部",
+    posLeft: "居左",
+    posRight: "居右",
     statusGroup: (name, total, usable, interval, order) =>
       "列表「" + name + "」:" + total + " 项 · " + usable + " 可用 · 每 " + interval + " 分钟 · " + order,
     statusUsable: (n) => n + " 张可用壁纸",
@@ -166,6 +179,17 @@ const STRINGS = {
     lowFpsHint: "Low frame rate — try pausing the video, raising wallpaper blur, or using a still wallpaper",
     language: "Language",
     langAuto: "Auto",
+    fit: "Fit",
+    fitCover: "Cover",
+    fitContain: "Contain",
+    fitFill: "Stretch",
+    fitNone: "Original",
+    position: "Align",
+    posCenter: "Center",
+    posTop: "Top",
+    posBottom: "Bottom",
+    posLeft: "Left",
+    posRight: "Right",
     statusGroup: (name, total, usable, interval, order) =>
       "List \"" + name + "\": " + total + " items · " + usable + " usable · every " + interval + " min · " + order,
     statusUsable: (n) => n + " usable wallpapers",
@@ -211,7 +235,12 @@ const DEFAULTS = {
   pauseOnHidden: true,
   pauseOnBattery: true,
   lang: "auto",
+  fit: "cover",
+  position: "center",
 };
+
+const FIT_MODES = ["cover", "contain", "fill", "none"];
+const POSITIONS = ["center", "top", "bottom", "left", "right"];
 
 // ── Persisted selection ─────────────────────────────────────────────────────
 function clampNum(v, lo, hi, fallback) {
@@ -256,6 +285,8 @@ function readPersisted() {
       pauseOnHidden: o.pauseOnHidden !== false,
       pauseOnBattery: o.pauseOnBattery !== false,
       lang: o.lang === "zh" || o.lang === "en" ? o.lang : "auto",
+      fit: FIT_MODES.indexOf(o.fit) >= 0 ? o.fit : DEFAULTS.fit,
+      position: POSITIONS.indexOf(o.position) >= 0 ? o.position : DEFAULTS.position,
     };
   } catch {
     return { id: "", ...DEFAULTS };
@@ -305,6 +336,8 @@ function persistSelection() {
       pauseOnHidden: selection.pauseOnHidden,
       pauseOnBattery: selection.pauseOnBattery,
       lang: selection.lang,
+      fit: selection.fit,
+      position: selection.position,
     }));
   } catch { /* storage full / blocked → session-only state, not fatal */ }
 }
@@ -711,6 +744,10 @@ function applyEffects() {
   s.setProperty("--webg-wallpaper-blur", selection.wallpaperBlur + "px");
   // Scaling compensates the transparent fringe CSS blur reveals at edges.
   s.setProperty("--webg-wallpaper-scale", (1 + selection.wallpaperBlur * 0.006).toFixed(4));
+  // Canvas fit: object-fit/position for video and still wallpapers (iframes
+  // ignore object-fit — web wallpapers always fill their layer).
+  s.setProperty("--webg-fit", selection.fit);
+  s.setProperty("--webg-position", selection.position);
 
   // Write the scrim colour directly too, then force a synchronous layout, so
   // slider feedback lands on this frame even on stalled compositors.
@@ -730,6 +767,8 @@ function clearEffects() {
   s.removeProperty("--webg-glass-brightness");
   s.removeProperty("--webg-wallpaper-blur");
   s.removeProperty("--webg-wallpaper-scale");
+  s.removeProperty("--webg-fit");
+  s.removeProperty("--webg-position");
   const scrim = document.getElementById(SCRIM_ID);
   if (scrim) scrim.style.background = "";
 }
@@ -856,6 +895,18 @@ function WallpaperPicker() {
   const onBorder = (pct) => { selection.border = pct / 100; persistSelection(); applyEffects(); emit(); };
   const onBlur = (px) => { selection.blur = px; persistSelection(); applyEffects(); emit(); };
   const onWallpaperBlur = (px) => { selection.wallpaperBlur = px; persistSelection(); applyEffects(); emit(); };
+  const onFit = (e) => {
+    selection.fit = FIT_MODES.indexOf(e.target.value) >= 0 ? e.target.value : "cover";
+    persistSelection();
+    applyEffects();
+    emit();
+  };
+  const onPosition = (e) => {
+    selection.position = POSITIONS.indexOf(e.target.value) >= 0 ? e.target.value : "center";
+    persistSelection();
+    applyEffects();
+    emit();
+  };
 
   if (!sel.loaded) {
     return React.createElement("div", { className: "webg-picker" },
@@ -1091,6 +1142,28 @@ function WallpaperPicker() {
     ),
     // ── Effects ──
     sel.id && React.createElement(React.Fragment, null,
+      // Canvas fit only matters for video/still wallpapers — an iframe
+      // ignores object-fit and always fills its layer.
+      sel.type !== "web" && React.createElement("div", { className: "webg-row webg-fit-row" },
+        React.createElement("span", { className: "webg-hint webg-label" }, t.fit),
+        React.createElement("select", {
+          className: "webg-select webg-fit-select",
+          value: sel.fit,
+          onChange: onFit,
+        },
+        ...[t.fitCover, t.fitContain, t.fitFill, t.fitNone].map((label, i) =>
+          React.createElement("option", { key: FIT_MODES[i], value: FIT_MODES[i] }, label),
+        )),
+        React.createElement("span", { className: "webg-hint webg-label" }, t.position),
+        React.createElement("select", {
+          className: "webg-select webg-position-select",
+          value: sel.position,
+          onChange: onPosition,
+        },
+        ...[t.posCenter, t.posTop, t.posBottom, t.posLeft, t.posRight].map((label, i) =>
+          React.createElement("option", { key: POSITIONS[i], value: POSITIONS[i] }, label),
+        )),
+      ),
       SliderRow(t.wallpaperBlur, 0, 60, 1, sel.wallpaperBlur, onWallpaperBlur, sel.wallpaperBlur + "px"),
       SliderRow(t.scrim, 0, 90, 5, Math.round(sel.scrim * 100), onScrim, Math.round(sel.scrim * 100) + "%"),
       SliderRow(t.border, 0, 90, 5, Math.round(sel.border * 100), onBorder, Math.round(sel.border * 100) + "%"),
@@ -1146,7 +1219,9 @@ const CSS = `
   .webg-layer--enter { opacity: 0; }
   .webg-layer--leave { opacity: 0; }
   .webg-layer .webg-media {
-    width: 100%; height: 100%; object-fit: cover; display: block;
+    width: 100%; height: 100%; object-fit: var(--webg-fit, cover);
+    object-position: var(--webg-position, center);
+    display: block;
     background: transparent; border: 0;
     filter: blur(var(--webg-wallpaper-blur, 0px));
     transform: scale(var(--webg-wallpaper-scale, 1));
@@ -1207,7 +1282,9 @@ const CSS = `
   }
 
   /* ── Picker chrome (token-driven, theme-aware) ── */
-  .webg-picker { display: flex; flex-direction: column; gap: 10px; }
+  /* padding-top lifts the first row off the settings-section divider so the
+     search/language row breathes; gap keeps every row evenly spaced. */
+  .webg-picker { display: flex; flex-direction: column; gap: 12px; padding-top: 10px; }
   .webg-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .webg-hint { font-size: 0.8em; opacity: 0.7; color: var(--dsw-alias-label-tertiary, inherit); }
   .webg-error {

@@ -10,6 +10,7 @@ A DSH bundle that turns your local **Wallpaper Engine** library into the live ba
 - **Search** — filter the grid instantly by title or workshop id.
 - **Rotation lists** — any number of carousel lists, each with its own wallpapers, interval (1–120 min) and order (sequence/random). Your first playable Wallpaper Engine playlist is imported automatically; others can be imported into any list.
 - **Four live sliders** — wallpaper blur, scrim, border contrast, and glass frosting, all instant and persisted.
+- **Canvas fit** — cover/contain/stretch/original sizing plus five-way alignment for video and still wallpapers.
 - **Resource monitor** — FPS readout with a low-framerate hint, plus auto-pause when the tab is hidden or the battery runs low (both optional).
 - **Bilingual** — the settings UI follows the shell's Language preference (Chinese/English), with a manual override in the picker.
 - **Crossfade** — wallpaper switches and clearing fade smoothly instead of snapping.
