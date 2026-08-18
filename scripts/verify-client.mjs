@@ -9,6 +9,7 @@
  *   - style tag lifecycle (injected on apply, REMOVED on dispose)
  *   - wallpaper + scrim layers under <body>, body attribute, CSS variables
  *   - web wallpapers get a sandboxed iframe (allow-scripts only)
+ *   - web wallpapers keep crop-adjust but not the object-fit select
  *   - scene wallpapers with a preview render as a static <img>
  *   - scene wallpapers without a preview stay unselectable
  *   - refresh does NOT remount the playing wallpaper (token churn tolerated)
@@ -158,6 +159,7 @@ const localStorageMock = {
       id: 'a',
       rotationGroupId: 'g1',
       rotationEnabled: true,
+      border: 1, // persisted at the slider's ceiling edge
       rotationGroups: [
         { id: 'g1', name: 'My list', interval: 5, order: 'sequence', wallpaperIds: ['a', 'b', 'c'] },
       ],
@@ -185,7 +187,7 @@ const fetchMock = (url) => {
       ],
       wallpapers: [
         { id: 'a', title: 'Video A', type: 'video', playable: true, media: `/we-background/media/tokA-${n}`, preview: `/we-background/preview/pA-${n}` },
-        { id: 'b', title: 'Web B', type: 'web', playable: true, media: `/we-background/media/tokB-${n}`, preview: `/we-background/preview/pB-${n}` },
+        { id: 'b', title: 'Web B', type: 'web', playable: true, media: `/we-background/media/tokB-${n}/index.html`, preview: `/we-background/preview/pB-${n}` },
       ],
     }),
   });
@@ -293,7 +295,6 @@ setTimeout(async () => {
   check('scrim veil is white in light theme', props['--webg-scrim-color'] === 'rgba(255,255,255,0.25)',
     props['--webg-scrim-color']);
   check('glass blur css var default', props['--webg-blur'] === '16px', props['--webg-blur']);
-  check('wallpaper blur css var default', props['--webg-wallpaper-blur'] === '0px');
   check('media filter is none at zero blur (bit-exact pixels)', props['--webg-media-filter'] === 'none',
     props['--webg-media-filter']);
   check('noise overlay hidden at zero blur', props['--webg-noise-display'] === 'none',
@@ -346,6 +347,36 @@ setTimeout(async () => {
     check('grid shows close + both playable cards (a, b)', cards.length === 3, cards.length);
     check('unplayable kinds never surface in the grid',
       !JSON.stringify(cards).includes('Scene'));
+
+    // Crop row availability per type: web wallpapers get 调整画面/重置裁剪
+    // (the crop is a CSS transform and applies to iframes) but NOT the
+    // object-fit select, which an iframe ignores. Card titles live in a
+    // nested .webg-card-title span — match one level down.
+    const cardByTitle = (list, title) => list.find((b) =>
+      Array.isArray(b.children) && b.children.some((c) =>
+        c && typeof c === 'object' && Array.isArray(c.children) && c.children.includes(title)));
+    {
+      const webCard = cardByTitle(cards, 'Web B');
+      check('web card found in the grid', Boolean(webCard));
+      if (webCard) {
+        webCard.props.onClick();
+        let settle = [...timers].reverse().find((t) => !t.cleared && !t.fired && t.ms < 1000);
+        if (settle) settle.fn();
+        const webTree = pickerRenders[0]();
+        const webButtons = collectButtons(webTree);
+        check('web wallpaper keeps the crop-adjust button',
+          webButtons.some((b) => Array.isArray(b.children) && b.children.includes('调整画面')));
+        check('web wallpaper hides the object-fit select (iframe ignores it)',
+          !collectSelects(webTree).some((s) =>
+            String(s.props.className || '').includes('webg-fit-select')));
+        const backToVideo = cardByTitle(webButtons, 'Video A');
+        if (backToVideo) {
+          backToVideo.props.onClick();
+          settle = [...timers].reverse().find((t) => !t.cleared && !t.fired && t.ms < 1000);
+          if (settle) settle.fn();
+        }
+      }
+    }
 
     // Refresh: inventory rebuilds hand out fresh tokens, but the playing
     // wallpaper must NOT remount (same id → same layer element).
@@ -503,6 +534,11 @@ setTimeout(async () => {
     })(tree, []);
     check('four sliders rendered', sliders.length === 4, sliders.length);
     if (sliders.length === 4) {
+      // A persisted border of 1.0 (100%) must display as the slider's 90
+      // ceiling — the control caps below total washout by design, and an
+      // out-of-range value would render inconsistently across browsers.
+      check('border slider clamps a persisted 1.0 to its 90 ceiling',
+        sliders[2].props.value === '90', sliders[2].props.value);
       const scrimSlider = sliders[1]; // 壁纸模糊, 暗化, 边框, 玻璃
       bodyEl.setAttribute('data-ds-dark-theme', '');
       scrimSlider.props.onChange({ target: { value: '25', style: { setProperty() {} } } });

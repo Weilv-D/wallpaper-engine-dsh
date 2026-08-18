@@ -52,9 +52,10 @@ function get(path, headers) {
 }
 
 before(async () => {
-  // Fixture: one video wallpaper in defaultprojects, one web wallpaper in a
-  // workshop library — plus a scene entry that must NOT surface (browsers
-  // cannot render .pkg scene packages).
+  // Fixture: one video wallpaper in defaultprojects, two web wallpapers in a
+  // workshop library — one flat (index.html + relative assets, exactly what a
+  // browser must resolve), one with a NESTED entry file — plus a scene entry
+  // that must NOT surface (browsers cannot render .pkg scene packages).
   tmp = mkdtempSync(join(tmpdir(), 'webg-host-'));
   const installDir = join(tmp, 'we');
   const vidDir = join(installDir, 'projects', 'defaultprojects', 'vid1');
@@ -67,10 +68,16 @@ before(async () => {
 
   const lib = join(tmp, 'lib');
   const webDir = join(lib, 'steamapps', 'workshop', 'content', '431960', 'web1');
-  mkdirSync(webDir, { recursive: true });
+  mkdirSync(join(webDir, 'js'), { recursive: true });
   writeFileSync(join(webDir, 'project.json'), JSON.stringify({ title: 'Webby', type: 'web', file: 'index.html' }));
-  writeFileSync(join(webDir, 'index.html'), '<html><script src="app.js"></script></html>');
+  writeFileSync(join(webDir, 'index.html'), '<html><script src="app.js"></script><script src="js/util.js"></script></html>');
   writeFileSync(join(webDir, 'app.js'), 'console.log(1)');
+  writeFileSync(join(webDir, 'js', 'util.js'), 'export const pi = Math.PI;');
+  const web2Dir = join(lib, 'steamapps', 'workshop', 'content', '431960', 'web2');
+  mkdirSync(join(web2Dir, 'bin'), { recursive: true });
+  writeFileSync(join(web2Dir, 'project.json'), JSON.stringify({ title: 'Nested', type: 'web', file: 'bin/start.html' }));
+  writeFileSync(join(web2Dir, 'bin', 'start.html'), '<html><script src="lib.js"></script></html>');
+  writeFileSync(join(web2Dir, 'bin', 'lib.js'), 'nested-ok');
   const sceneDir = join(lib, 'steamapps', 'workshop', 'content', '431960', 'sc1');
   mkdirSync(sceneDir, { recursive: true });
   writeFileSync(join(sceneDir, 'project.json'), JSON.stringify({ title: 'PkgScene', type: 'scene', file: 'x.pkg', preview: 'p.jpg' }));
@@ -98,14 +105,19 @@ after(async () => {
 });
 
 test('inventory: fields, tokens, both renderable kinds present', () => {
-  assert.equal(inventory.total, 2);
-  assert.equal(inventory.portableCount, 2);
+  assert.equal(inventory.total, 3);
+  assert.equal(inventory.portableCount, 3);
   const vid = inventory.wallpapers.find((w) => w.id === 'vid1');
   const web = inventory.wallpapers.find((w) => w.id === 'web1');
-  assert.ok(vid && web);
+  const web2 = inventory.wallpapers.find((w) => w.id === 'web2');
+  assert.ok(vid && web && web2);
   assert.ok(vid.playable && vid.media.startsWith('/we-background/media/'));
   assert.ok(vid.preview.startsWith('/we-background/preview/'));
-  assert.ok(web.playable && web.media.startsWith('/we-background/media/'));
+  // Web media URLs are addressed at the ENTRY FILE so the document URL
+  // mirrors the project directory — flat entries and nested entries alike.
+  assert.ok(web.playable);
+  assert.match(web.media, /^\/we-background\/media\/[^/]+\/index\.html$/);
+  assert.match(web2.media, /^\/we-background\/media\/[^/]+\/bin\/start\.html$/);
   // The scene fixture is filtered out: .pkg packages are not renderable.
   assert.ok(!inventory.wallpapers.some((w) => w.id === 'sc1'));
   assert.ok(!JSON.stringify(inventory).includes('PkgScene'));
@@ -168,17 +180,18 @@ test('tokens: stable across TTL rebuilds, re-minted on explicit refresh', async 
 test('sub-assets: contained fetch works; every escape is refused', async () => {
   const web = inventory.wallpapers.find((w) => w.id === 'web1');
   const vid = inventory.wallpapers.find((w) => w.id === 'vid1');
+  const webRoot = web.media.slice(0, web.media.lastIndexOf('/'));
 
-  const asset = await get(`${web.media}/app.js`);
+  const asset = await get(`${webRoot}/app.js`);
   assert.equal(asset.status, 200);
   assert.equal(await asset.text(), 'console.log(1)');
 
   // `..` traversal (encoded or bare), backslash tricks, and sub-assets on a
   // non-web token are all refused; the secret file must never be served.
   for (const attempt of [
-    `${web.media}/..%2F..%2F..%2F..%2Fsecret.txt`,
-    `${web.media}/..%5C..%5Csecret.txt`,
-    `${web.media}/../../secret.txt`,
+    `${webRoot}/..%2F..%2F..%2F..%2Fsecret.txt`,
+    `${webRoot}/..%5C..%5Csecret.txt`,
+    `${webRoot}/index.html/../../../secret.txt`,
     `${vid.media}/app.js`, // video token has no rootDir
     `${vid.preview}/app.js`, // preview tokens never carry sub-assets
   ]) {
@@ -186,6 +199,62 @@ test('sub-assets: contained fetch works; every escape is refused', async () => {
     assert.ok(res.status === 403 || res.status === 404, `${attempt} → ${res.status}`);
     assert.notEqual(await res.text(), 'must-never-leak');
   }
+});
+
+test('web documents: what a BROWSER resolves actually serves (the blank-wallpaper regression)', async () => {
+  const web = inventory.wallpapers.find((w) => w.id === 'web1');
+  const web2 = inventory.wallpapers.find((w) => w.id === 'web2');
+
+  // The document itself.
+  const doc = await get(web.media);
+  assert.equal(doc.status, 200);
+  assert.equal(doc.headers.get('content-type'), 'text/html; charset=utf-8');
+  const html = await doc.text();
+  assert.ok(html.includes('app.js'));
+
+  // Exactly the URLs a browser resolves for the wallpaper's relative
+  // references inside that document — the old bare-token URL made these
+  // resolve one directory too high (…/media/app.js → 404 → blank iframe).
+  for (const [base, ref, expectedBody] of [
+    [web.media, 'app.js', 'console.log(1)'],
+    [web.media, 'js/util.js', 'export const pi = Math.PI;'],
+    [web2.media, 'lib.js', 'nested-ok'], // relative to the NESTED document dir
+  ]) {
+    const resolved = new URL(ref, `http://x${base}`).pathname;
+    const res = await get(resolved);
+    assert.equal(res.status, 200, `${ref} → ${resolved}`);
+    assert.equal(await res.text(), expectedBody);
+  }
+
+  // Directory form (`…/media/<token>/`) serves the entry document itself.
+  const dir = await get(web.media.slice(0, web.media.lastIndexOf('/')) + '/');
+  assert.equal(dir.status, 200);
+  assert.equal(await dir.text(), html);
+  // …but a preview token has no directory form.
+  const vid = inventory.wallpapers.find((w) => w.id === 'vid1');
+  const badDir = await get(vid.preview + '/');
+  assert.ok(badDir.status === 404 || badDir.status === 403, String(badDir.status));
+});
+
+test('tokens survive TTL rebuilds for entry-file URLs (prune reads the first segment)', async () => {
+  const web = inventory.wallpapers.find((w) => w.id === 'web1');
+  // Non-forced rebuild (TTL elapsed): tokens are reused, then pruned against
+  // the payload. A prune that read the LAST path segment would take
+  // `index.html` for the token, kill the live one, and blank the wallpaper.
+  await get('/we-background/inventory');
+  const doc = await get(web.media);
+  assert.equal(doc.status, 200);
+});
+
+test('CORS: media is readable from the sandboxed iframe (opaque origin)', async () => {
+  const vid = inventory.wallpapers.find((w) => w.id === 'vid1');
+  const res = await get(vid.media, { range: 'bytes=0-3' });
+  assert.equal(res.headers.get('access-control-allow-origin'), '*');
+
+  const pre = await fetch(`http://127.0.0.1:${port}${vid.media}`, { method: 'OPTIONS' });
+  assert.equal(pre.status, 204);
+  assert.equal(pre.headers.get('access-control-allow-origin'), '*');
+  assert.equal(pre.headers.get('access-control-allow-methods'), 'GET, HEAD, OPTIONS');
 });
 
 test('inventory HEAD and method guards', async () => {

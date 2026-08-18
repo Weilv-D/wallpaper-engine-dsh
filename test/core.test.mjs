@@ -340,6 +340,10 @@ test('buildInventoryFrom: assembles wallpapers + playlists from a fixture tree',
   assert.equal(w1.id, 'p1'); assert.equal(w1.type, 'video'); assert.equal(w1.playable, true);
   assert.ok(w1.media.endsWith('/media/tok-1'));
   assert.equal(w2.id, 'p3'); assert.equal(w2.type, 'web'); assert.equal(w2.playable, true);
+  // The web URL is addressed AT the entry file: the document URL mirrors the
+  // project directory so the wallpaper's relative references resolve — a bare
+  // token URL strands `app.js` one directory too high (404, blank wallpaper).
+  assert.equal(w2.media, '/we-background/media/tok-2/index.html');
 
   // mint entries carry containment info the host needs for sub-assets,
   // plus a stable per-asset key for token reuse across rebuilds.
@@ -378,6 +382,33 @@ test('buildInventoryFrom: scene/application entries are excluded and never minte
   assert.equal(inv.portableCount, 2);
   assert.ok(!inv.wallpapers.some((w) => w.id === 'p4'));
   assert.equal(mints.length, 2); // exactly p1:media and p3:media
+}));
+
+test('toUrlPath: separators, spaces and unicode become URL-safe segments', () => {
+  assert.equal(core.toUrlPath('bin\\index.html'), 'bin/index.html');
+  assert.equal(core.toUrlPath('我的 画.html'), encodeURIComponent('我的 画.html'));
+  assert.equal(core.toUrlPath('a//b'), 'a/b'); // empty segments never double-slash
+});
+
+test('buildInventoryFrom: nested/unicode web entries keep their directory shape', () => withTemp(async (t) => {
+  const installDir = join(t, 'we');
+  const lib = join(t, 'lib');
+  const dir = join(lib, 'steamapps', 'workshop', 'content', '431960', 'p5');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'project.json'), JSON.stringify({
+    title: 'Nested', type: 'web', file: 'bin/start page.html',
+  }));
+  mkdirSync(join(dir, 'bin'), { recursive: true });
+  writeFileSync(join(dir, 'bin', 'start page.html'), '<html></html>');
+  const inv = await core.buildInventoryFrom(
+    { installDir, libraryRoots: [lib] },
+    { mint: () => 'tok-web' },
+  );
+  const w = inv.wallpapers.find((x) => x.id === 'p5');
+  // Each path segment is encoded on its own: '/' stays a separator, the
+  // space is %20 — the route's decodeURIComponent round-trips it exactly.
+  assert.equal(w.media,
+    '/we-background/media/tok-web/bin/' + encodeURIComponent('start page.html'));
 }));
 
 test('buildInventoryFrom: a falsy mint never produces "…/null" URLs', () => withTemp(async (t) => {

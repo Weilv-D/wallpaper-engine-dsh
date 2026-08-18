@@ -47,6 +47,29 @@ export interface HostContext {
   };
 }
 
+/** webServer-like registry consumed by createRouteRegistrar. */
+export interface WebServerRegistry {
+  register(route: {
+    kind: 'exact' | 'prefix';
+    path: string;
+    handler(req: unknown, res: unknown): void | Promise<void>;
+  }): () => void;
+}
+
+/**
+ * Register all HTTP routes on a webServer-like registry; returns a disposer.
+ * Exported so integration tests can drive the surface against a fixture
+ * discovery without a live Steam install.
+ */
+export function createRouteRegistrar(
+  webServer: WebServerRegistry,
+  opts?: {
+    discover?: () => Promise<{ installDir: string | null; libraryRoots: string[] }>;
+    inventoryTtlMs?: number;
+    discoveryTtlMs?: number;
+  },
+): () => void;
+
 export declare const inject: string[];
 export declare function apply(ctx: HostContext): () => void;
 
