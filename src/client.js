@@ -6,10 +6,13 @@
  *
  * Features:
  *   1. Inventory from the host half (GET /we-background/inventory); 刷新
- *      forces a host-side rebuild (?refresh=1).
+ *      forces a host-side rebuild (?refresh=1). Renderable kinds ONLY:
+ *      video and web wallpapers — .pkg scene/application packages are
+ *      filtered out host-side (no browser can render them).
  *   2. Rendering behind the DSH GUI with crossfade:
- *        video/web wallpaper → <video> / sandboxed <iframe>
- *        scene/application   → static preview <img> (still wallpapers)
+ *        video wallpaper → <video>; web wallpaper → sandboxed <iframe>;
+ *        a playable wallpaper that repeatedly fails to decode demotes to
+ *        its preview <img> (manual 刷新 retries the live media).
  *   3. Search box filters the grid by title or id.
  *   4. Four live sliders (壁纸模糊 / 暗化 / 边框 / 玻璃) riding DSH design
  *      tokens — light/dark theme switches just work.
@@ -21,8 +24,11 @@
  *   7. Bilingual UI (中文/English): follows the DSH shell's Language setting
  *      (locale service + locale/change event), with a manual override that
  *      persists; falls back to the browser language.
- *   8. Canvas fit controls (排布/对齐): object-fit + object-position for
- *      video and still wallpapers.
+ *   8. Canvas fit + manual crop (排布): object-fit base mode, plus a
+ *      drag-to-pan / wheel-to-zoom adjust overlay (translate/scale
+ *      transform) persisted per session.
+ *   9. Legibility on any wallpaper: a theme-opposing veil (black in dark
+ *      theme, white in light) with a luminance-adaptive "smart veil" floor.
  */
 
 const React = require("react");
@@ -38,12 +44,6 @@ const CROSSFADE_MS = 520;
 const BATTERY_SAVER_LEVEL = 0.2;
 /** Below this FPS the picker shows a performance hint. */
 const LOW_FPS = 24;
-
-/**
- * Below this preview width a fullscreen cover render is pure upscale mush —
- * present as ambient (sharp contain over a blurred copy of itself) instead.
- */
-const LOW_RES_PREVIEW_PX = 1200;
 
 // Respect the OS "reduce motion" preference: start paused rather than
 // autoplaying a video loop at someone who asked for less motion.
@@ -74,7 +74,6 @@ const STRINGS = {
     noPreview: "无预览",
     badgeVideo: "视频",
     badgeWeb: "网页",
-    badgeStill: "静态",
     rotationList: "轮播列表",
     selectList: "— 选择轮播列表 —",
     noLists: "— 暂无轮播列表 —",
@@ -120,8 +119,6 @@ const STRINGS = {
     adjustDone: "完成",
     adjustHint: "拖动平移 · 滚轮缩放 · Esc 或点「完成」退出",
     resetCrop: "重置裁剪",
-    ambientNote: "预览分辨率低,已氛围化显示",
-    lowResBadge: "低清",
     statusGroup: (name, total, usable, interval, order) =>
       "列表「" + name + "」:" + total + " 项 · " + usable + " 可用 · 每 " + interval + " 分钟 · " + order,
     statusUsable: (n) => n + " 张可用壁纸",
@@ -154,7 +151,6 @@ const STRINGS = {
     noPreview: "No preview",
     badgeVideo: "Video",
     badgeWeb: "Web",
-    badgeStill: "Still",
     rotationList: "Rotation list",
     selectList: "— Select a list —",
     noLists: "— No lists yet —",
@@ -200,8 +196,6 @@ const STRINGS = {
     adjustDone: "Done",
     adjustHint: "Drag to pan · wheel to zoom · Esc or Done to exit",
     resetCrop: "Reset crop",
-    ambientNote: "Low-res preview — ambient fill",
-    lowResBadge: "Low-res",
     statusGroup: (name, total, usable, interval, order) =>
       "List \"" + name + "\": " + total + " items · " + usable + " usable · every " + interval + " min · " + order,
     statusUsable: (n) => n + " usable wallpapers",
@@ -317,7 +311,6 @@ const selection = {
   ...readPersisted(),
   url: null,
   type: null,
-  previewW: null, // pixel width of the still being shown (ambient decisions)
   adjusting: false, // crop-adjust overlay open (not persisted)
   playing: !REDUCED_MOTION,
   loading: false,
@@ -368,17 +361,16 @@ function persistSelection() {
 
 // ── Wallpaper predicates ─────────────────────────────────────────────────────
 // playable: real media (video/web) renders live.
-// static:   scene/application with a preview image renders as a still.
+// Renderable kinds ONLY — scene/application wallpapers are .pkg scene
+// packages the browser cannot render (their live animation is Wallpaper
+// Engine's desktop job), so they are filtered out of the grid entirely
+// rather than offered as degraded preview stills.
 function isPlayable(w) {
   return Boolean(w && w.playable && (w.type === "video" || w.type === "web"));
 }
 
-function isStatic(w) {
-  return Boolean(w && !isPlayable(w) && typeof w.preview === "string" && w.preview);
-}
-
 function isSelectable(w) {
-  return isPlayable(w) || isStatic(w);
+  return isPlayable(w);
 }
 
 function selectableInventory() {
@@ -386,13 +378,22 @@ function selectableInventory() {
 }
 
 // ── Inventory ────────────────────────────────────────────────────────────────
+// Monotonic token for in-flight inventory fetches: a fetch that started
+// before a newer one must not commit its (older) state afterwards, and a
+// fetch still in flight at dispose must not commit anything at all — its
+// applySelection call would re-arm the rotation timer on a torn-down store.
+let inventoryEpoch = 0;
+let disposed = false;
+
 async function loadInventory(forceRefresh) {
+  const epoch = ++inventoryEpoch;
   selection.loading = true;
   emit();
   try {
     const res = await fetch(forceRefresh ? INVENTORY_URL + "?refresh=1" : INVENTORY_URL, { cache: "no-store" });
     if (!res.ok) throw new Error("inventory HTTP " + res.status);
     const data = await res.json();
+    if (disposed || epoch !== inventoryEpoch) return;
     selection.inventory = {
       installDir: data.installDir || null,
       wallpapers: Array.isArray(data.wallpapers) ? data.wallpapers : [],
@@ -402,11 +403,13 @@ async function loadInventory(forceRefresh) {
       error: null,
     };
   } catch (err) {
+    if (disposed || epoch !== inventoryEpoch) return;
     selection.inventory = {
       installDir: null, wallpapers: [], total: 0, portableCount: 0, playlists: [],
       error: String(err && err.message ? err.message : err),
     };
   }
+  if (disposed || epoch !== inventoryEpoch) return;
   selection.loading = false;
   selection.loaded = true;
 
@@ -624,17 +627,14 @@ function applySelection(id) {
   if (isPlayable(w) && !demotedToPreview.has(selection.id)) {
     selection.url = w.media;
     selection.type = w.type; // "video" | "web"
-    selection.previewW = null;
-  } else if (w && w.preview) {
-    // Static path: scene/application wallpapers, and playable wallpapers
-    // demoted after repeated media failures (undecodable container…).
+  } else if (isPlayable(w) && w.preview) {
+    // Playable wallpaper demoted after repeated media failures (an
+    // undecodable container) — its preview still is the graceful fallback.
     selection.url = w.preview;
     selection.type = "image";
-    selection.previewW = typeof w.previewW === "number" ? w.previewW : null;
   } else {
     selection.url = null;
     selection.type = null;
-    selection.previewW = null;
   }
   syncRotationTimer();
   emit();
@@ -666,11 +666,10 @@ function applyBatteryPause() {
 // Set by a media error handler to force a remount with fresh URLs; cleared
 // once the remount happens.
 let forceRemount = false;
-let lastMediaRecoveryAt = 0;
-// Media failure bookkeeping: the first error for a wallpaper may just be a
-// stale token (fixed by a refresh+remount); a SECOND error for the same id
-// means the bytes themselves are unusable (e.g. an mkv/avi Chromium cannot
-// decode) — demote it to its preview image instead of looping forever.
+// Per-wallpaper recovery timestamps: the first error for a wallpaper may
+// just be a stale token; a SECOND error for the same id means the bytes are
+// unusable — demote it to its preview instead of looping forever.
+const lastRecoveryAt = new Map(); // wallpaperId → last recovery timestamp
 const mediaFailures = new Map(); // wallpaperId → consecutive failure count
 const demotedToPreview = new Set(); // wallpaperIds now rendered as stills
 
@@ -696,33 +695,14 @@ function buildMedia(sel) {
     media.setAttribute("title", S().iframeTitle);
     media.className = "webg-media webg-iframe";
   } else {
-    // Static wallpaper: the scene/application preview as a still image.
+    // Static fallback: a playable wallpaper demoted after repeated media
+    // failures — its preview still beats a black screen.
     media = document.createElement("img");
     media.src = sel.url;
     media.alt = "";
     media.draggable = false;
     media.setAttribute("decoding", "async");
     media.className = "webg-media";
-    // Low-resolution previews (many workshop scenes ship 256–500px thumbs)
-    // look terrible stretched fullscreen under cover. Present them like
-    // music-app artwork instead: the image at its natural sharpness
-    // (contain), over a heavily blurred full-bleed copy of itself.
-    if (sel.fit === "cover" && typeof sel.previewW === "number" &&
-        sel.previewW > 0 && sel.previewW < LOW_RES_PREVIEW_PX) {
-      const wrap = document.createElement("div");
-      wrap.className = "webg-ambient";
-      const bg = document.createElement("img");
-      bg.src = sel.url;
-      bg.alt = "";
-      bg.draggable = false;
-      bg.className = "webg-ambient-bg";
-      wrap.appendChild(bg);
-      media.classList.add("webg-ambient-fg");
-      wrap.appendChild(media);
-      attachStillSampling(media);
-      attachMediaError(media, sel);
-      return wrap;
-    }
   }
   attachStillSampling(media, sel);
   attachMediaError(media, sel);
@@ -745,16 +725,23 @@ function attachMediaError(media, sel) {
     mediaFailures.set(id, count);
     const w = selection.inventory.wallpapers.find((x) => x.id === id);
     if (count === 1) {
-      // Maybe just a dead token: refetch fresh URLs and remount (throttled).
+      // Maybe just a dead token: refetch fresh URLs and remount. Throttled
+      // PER WALLPAPER — a global window would strand a video whose first
+      // error lands soon after an unrelated recovery (no remount, no second
+      // error, blank layer until a manual refresh).
       const now = Date.now();
-      if (now - lastMediaRecoveryAt < 10000) return;
-      lastMediaRecoveryAt = now;
+      if (now - (lastRecoveryAt.get(id) || 0) < 10000) return;
+      lastRecoveryAt.set(id, now);
       forceRemount = true;
       loadInventory(true);
     } else if (w && w.preview && !demotedToPreview.has(id)) {
       // The media itself is unusable here — fall back to the still preview.
       demotedToPreview.add(id);
       applySelection(id);
+    } else if (!w || (!w.preview && !w.media)) {
+      // Nothing renderable at all (preview-less or vanished from the
+      // inventory): clear the selection instead of a black screen loop.
+      applySelection("");
     }
   });
 }
@@ -814,8 +801,11 @@ function enterAdjust() {
   };
   const onPointerMove = (e) => {
     if (!drag) return;
-    const w = overlay.clientWidth || 1;
-    const h = overlay.clientHeight || 1;
+    // translate % refers to the MEDIA BOX, which (blur overscan) is wider
+    // than the viewport by 2× the wallpaper blur — divide by that, so the
+    // content tracks the cursor 1:1 at any blur setting.
+    const w = (overlay.clientWidth || 1) + 2 * selection.wallpaperBlur;
+    const h = (overlay.clientHeight || 1) + 2 * selection.wallpaperBlur;
     // True clamping (clampNum is a validate-or-fallback for persisted data).
     selection.offsetX = Math.min(200, Math.max(-200,
       selection.offsetX + ((e.clientX - drag.x) / w) * 100));
@@ -829,10 +819,20 @@ function enterAdjust() {
     drag = null;
     persistSelection();
   };
+  // pointercancel (touch gesture takeover): end the drag without losing the
+  // current offsets — otherwise drag stays "stuck" until the next pointerup.
+  const onPointerCancel = () => {
+    if (!drag) return;
+    drag = null;
+    persistSelection();
+  };
   const onWheel = (e) => {
     if (typeof e.preventDefault === "function") e.preventDefault();
-    const next = clampNum(selection.zoom * Math.exp(-(e.deltaY || 0) * 0.0012),
-      0.25, 4, selection.zoom);
+    // True clamping to [0.25, 4] — clampNum is a validate-or-fallback for
+    // persisted data and would REJECT an out-of-range zoom instead of
+    // pinning it to the boundary.
+    const next = Math.min(4, Math.max(0.25,
+      selection.zoom * Math.exp(-(e.deltaY || 0) * 0.0012)));
     selection.zoom = Math.round(next * 100) / 100;
     applyEffects();
     persistSelection();
@@ -843,6 +843,7 @@ function enterAdjust() {
   overlay.addEventListener("pointerdown", onPointerDown);
   overlay.addEventListener("pointermove", onPointerMove);
   overlay.addEventListener("pointerup", onPointerUp);
+  overlay.addEventListener("pointercancel", onPointerCancel);
   overlay.addEventListener("wheel", onWheel, { passive: false });
   done.addEventListener("click", onDone);
   document.addEventListener("keydown", onKey);
@@ -851,6 +852,7 @@ function enterAdjust() {
     overlay.removeEventListener("pointerdown", onPointerDown);
     overlay.removeEventListener("pointermove", onPointerMove);
     overlay.removeEventListener("pointerup", onPointerUp);
+    overlay.removeEventListener("pointercancel", onPointerCancel);
     overlay.removeEventListener("wheel", onWheel);
     done.removeEventListener("click", onDone);
     document.removeEventListener("keydown", onKey);
@@ -865,12 +867,6 @@ function resetCrop() {
   persistSelection();
   applyEffects();
   emit();
-}
-
-function isAmbientActive(sel) {
-  return sel.type === "image" && sel.fit === "cover" &&
-    typeof sel.previewW === "number" && sel.previewW > 0 &&
-    sel.previewW < LOW_RES_PREVIEW_PX;
 }
 
 // Crossfade/clear leave timers: tracked so dispose can cancel them instead of
@@ -978,6 +974,7 @@ function sampleWallpaperLuminance() {
     const g = sampleCanvas.getContext("2d", { willReadFrequently: true });
     g.drawImage(media, 0, 0, 16, 16);
     const d = g.getImageData(0, 0, 16, 16).data;
+    if (!d || d.length < 4) return; // unreadable frame → keep previous sample
     let sum = 0;
     for (let i = 0; i < d.length; i += 4) {
       sum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
@@ -1079,7 +1076,9 @@ function SliderRow(label, min, max, step, value, onInput, suffix) {
       min: String(min), max: String(max), step: String(step),
       value: String(value),
       style: { "--webg-p": String(pct) },
-      onInput: set,
+      // React normalizes onChange on range inputs to the DOM input event —
+      // it fires CONTINUOUSLY while dragging. Registering onInput too would
+      // run the handler twice per tick.
       onChange: set,
     }),
     React.createElement("span", { className: "webg-hint webg-value" }, suffix),
@@ -1088,8 +1087,7 @@ function SliderRow(label, min, max, step, value, onInput, suffix) {
 
 function typeBadge(w, t) {
   if (w.type === "video") return t.badgeVideo;
-  if (w.type === "web") return t.badgeWeb;
-  return t.badgeStill;
+  return t.badgeWeb;
 }
 
 function matchesQuery(w, q) {
@@ -1113,8 +1111,6 @@ function ThumbCard(w, selected, onClick, t) {
       })
     : React.createElement("span", { className: "webg-card-placeholder" }, t.noPreview),
   React.createElement("span", { className: "webg-card-type" }, typeBadge(w, t)),
-  (typeof w.previewW === "number" && w.previewW > 0 && w.previewW < LOW_RES_PREVIEW_PX) &&
-    React.createElement("span", { className: "webg-card-lowres" }, t.lowResBadge),
   React.createElement("span", { className: "webg-card-title" }, w.title),
   );
 }
@@ -1131,6 +1127,7 @@ function WallpaperPicker() {
     // preview after decode failures.
     demotedToPreview.clear();
     mediaFailures.clear();
+    lastRecoveryAt.clear();
     loadInventory(true);
   };
   const onLangChange = (e) => {
@@ -1346,7 +1343,10 @@ function WallpaperPicker() {
           value: String(editing.interval),
           onChange: (e) => { editing.interval = clampNum(Number(e.target.value), 1, 1440, DEFAULTS.rotationInterval); emit(); },
         },
-        ...INTERVALS.map((minutes) =>
+        // A persisted interval outside the preset steps (imported groups,
+        // hand-edited storage) still gets a matching option — otherwise the
+        // select would silently display the first preset instead of reality.
+        ...[...new Set([...INTERVALS, editing.interval])].sort((x, y) => x - y).map((minutes) =>
           React.createElement("option", { key: minutes, value: String(minutes) }, t.minutes(minutes)),
         )),
         React.createElement("span", { className: "webg-hint webg-label" }, t.order),
@@ -1444,9 +1444,10 @@ function WallpaperPicker() {
         disabled: !sel.rotationEnabled || !sel.rotationGroupId || usableCount < 2,
         title: t.intervalTitle,
       },
-      ...INTERVALS.map((minutes) =>
-        React.createElement("option", { key: minutes, value: String(minutes) }, t.minutes(minutes)),
-      )),
+      ...[...new Set([...INTERVALS, group ? group.interval : DEFAULTS.rotationInterval])]
+        .sort((x, y) => x - y).map((minutes) =>
+          React.createElement("option", { key: minutes, value: String(minutes) }, t.minutes(minutes)),
+        )),
       !sel.rotationGroupId && React.createElement("span", { className: "webg-hint" }, t.needList),
       sel.rotationGroupId && usableCount < 2 && React.createElement("span", { className: "webg-hint" }, t.needTwo),
     ),
@@ -1473,12 +1474,11 @@ function WallpaperPicker() {
           React.createElement("button", {
             className: "webg-btn", type: "button", onClick: resetCrop,
           }, t.resetCrop),
-        isAmbientActive(sel) &&
-          React.createElement("span", { className: "webg-hint" }, t.ambientNote),
       ),
       React.createElement("div", { className: "webg-effects" },
         SliderRow(t.wallpaperBlur, 0, 60, 1, sel.wallpaperBlur, onWallpaperBlur, sel.wallpaperBlur + "px"),
-        SliderRow(t.scrim, 0, 90, 5, Math.round(sel.scrim * 100), onScrim, Math.round(sel.scrim * 100) + "%"),
+        SliderRow(t.scrim, 0, 90, 5, Math.min(90, Math.round(sel.scrim * 100)), onScrim,
+          Math.round(sel.scrim * 100) + "%"),
         SliderRow(t.border, 0, 90, 5, Math.round(sel.border * 100), onBorder, Math.round(sel.border * 100) + "%"),
         SliderRow(t.glass, 0, 40, 1, sel.blur, onBlur, sel.blur + "px"),
       ),
@@ -1560,26 +1560,6 @@ const CSS = `
        because translate is listed before scale), zoom is centered. */
     transform: translate(var(--webg-offset-x, 0%), var(--webg-offset-y, 0%)) scale(var(--webg-zoom, 1));
     transform-origin: center center;
-  }
-
-  /* Ambient presentation for low-resolution stills: the sharp image (fg,
-     contain) floats over a heavily blurred full-bleed copy of itself (bg).
-     The fg keeps the user's wallpaper-blur/crop; the bg has its own fixed
-     blur with its own overscan, so its fringe never shows. */
-  .webg-ambient {
-    position: absolute;
-    inset: calc(-1 * var(--webg-wallpaper-blur, 0px));
-    overflow: hidden;
-  }
-  .webg-ambient-bg {
-    position: absolute; inset: -64px;
-    width: calc(100% + 128px); height: calc(100% + 128px);
-    object-fit: cover; display: block;
-    filter: blur(48px) saturate(1.25) brightness(0.92);
-  }
-  .webg-ambient .webg-media {
-    inset: 0; width: 100%; height: 100%;
-    object-fit: contain;
   }
 
   /* Crop-adjust overlay: topmost, transparent — only its hint bar is chrome.
@@ -1824,11 +1804,6 @@ const CSS = `
     font-size: 10px; line-height: 1.5;
     color: #fff; background: rgba(0, 0, 0, 0.5);
   }
-  .webg-card-lowres {
-    position: absolute; top: 4px; left: 4px; padding: 1px 6px; border-radius: 4px;
-    font-size: 10px; line-height: 1.5;
-    color: #fff; background: rgba(0, 0, 0, 0.5);
-  }
   .webg-card-title {
     position: absolute; left: 0; right: 0; bottom: 0; padding: 3px 6px;
     font-size: 11px; line-height: 1.2; color: #fff;
@@ -1939,6 +1914,9 @@ function apply(ctx) {
         observer.observe(document.body, { attributes: true, attributeFilter: ["data-ds-dark-theme"] });
       }
       return () => {
+        // Stop any in-flight inventory fetch from committing state (and
+        // re-arming the rotation timer) after teardown began.
+        disposed = true;
         unsubLayers();
         unsubEffects();
         // Close the crop-adjust overlay if it is open (moves the layer back,

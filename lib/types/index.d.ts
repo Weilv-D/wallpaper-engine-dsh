@@ -4,10 +4,14 @@
  * mirrored on the default export.
  */
 
+/**
+ * One inventory entry. Scene/application wallpapers are filtered out at the
+ * source — the wire only ever carries the browser-renderable kinds.
+ */
 export interface WallpaperSummary {
   id: string;
   title: string;
-  type: 'scene' | 'video' | 'web' | 'application';
+  type: 'video' | 'web';
   playable: boolean;
   media: string | null;
   preview: string | null;

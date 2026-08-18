@@ -53,7 +53,8 @@ function get(path, headers) {
 
 before(async () => {
   // Fixture: one video wallpaper in defaultprojects, one web wallpaper in a
-  // workshop library — the two renderable kinds, with a bundled sub-asset.
+  // workshop library — plus a scene entry that must NOT surface (browsers
+  // cannot render .pkg scene packages).
   tmp = mkdtempSync(join(tmpdir(), 'webg-host-'));
   const installDir = join(tmp, 'we');
   const vidDir = join(installDir, 'projects', 'defaultprojects', 'vid1');
@@ -70,6 +71,10 @@ before(async () => {
   writeFileSync(join(webDir, 'project.json'), JSON.stringify({ title: 'Webby', type: 'web', file: 'index.html' }));
   writeFileSync(join(webDir, 'index.html'), '<html><script src="app.js"></script></html>');
   writeFileSync(join(webDir, 'app.js'), 'console.log(1)');
+  const sceneDir = join(lib, 'steamapps', 'workshop', 'content', '431960', 'sc1');
+  mkdirSync(sceneDir, { recursive: true });
+  writeFileSync(join(sceneDir, 'project.json'), JSON.stringify({ title: 'PkgScene', type: 'scene', file: 'x.pkg', preview: 'p.jpg' }));
+  writeFileSync(join(sceneDir, 'p.jpg'), 'jpg');
   writeFileSync(join(tmp, 'secret.txt'), 'must-never-leak');
 
   const registry = mockWebServer();
@@ -101,6 +106,9 @@ test('inventory: fields, tokens, both renderable kinds present', () => {
   assert.ok(vid.playable && vid.media.startsWith('/we-background/media/'));
   assert.ok(vid.preview.startsWith('/we-background/preview/'));
   assert.ok(web.playable && web.media.startsWith('/we-background/media/'));
+  // The scene fixture is filtered out: .pkg packages are not renderable.
+  assert.ok(!inventory.wallpapers.some((w) => w.id === 'sc1'));
+  assert.ok(!JSON.stringify(inventory).includes('PkgScene'));
 });
 
 test('media: full GET, HEAD, single range, suffix range', async () => {

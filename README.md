@@ -2,11 +2,11 @@
 
 [English](README.md) | [中文](README.zh.md)
 
-A DSH bundle that turns your local **Wallpaper Engine** library into the live background of the DSH web GUI (`dsh web`). Video wallpapers play behind the chat, web wallpapers render in place, and scene/application wallpapers join in as still images — with crossfade transitions, liquid-glass panels, rotation lists, search, a resource monitor, and a bilingual UI.
+A DSH bundle that turns your local **Wallpaper Engine** library into the live background of the DSH web GUI (`dsh web`). Video wallpapers play behind the chat and web wallpapers render in place — with crossfade transitions, liquid-glass panels, rotation lists, search, a resource monitor, and a bilingual UI.
 
 ## Features
 
-- **Whole-library browsing** — video and web wallpapers render live; scene and application wallpapers show their preview as a static background. Everything with a preview or playable file is selectable, badged by type (Video / Web / Still).
+- **Renderable-only browsing** — video and web wallpapers render live and are the only kinds listed: scene and application wallpapers are Wallpaper Engine's private `.pkg` scene packages, which no browser can render, so they are filtered out instead of offered as degraded stills. A video the browser cannot decode falls back to its preview image until you refresh.
 - **Search** — filter the grid instantly by title or workshop id.
 - **Rotation lists** — any number of carousel lists, each with its own wallpapers, interval (1–120 min) and order (sequence/random). Your first playable Wallpaper Engine playlist is imported automatically; others can be imported into any list.
 - **Four live sliders** — Wallpaper blur, Scrim, Borders, Glass — all instant and persisted.
@@ -50,13 +50,13 @@ The bundle has two halves:
   - `GET /we-background/inventory[?refresh=1]`
   - `GET /we-background/media/<token>[/asset…]` — with HTTP Range support for video seeking; web wallpapers can fetch their bundled sub-assets
   - `GET /we-background/preview/<token>`
-- A **browser plugin** renders the chosen wallpaper on a fixed layer behind the app frame, contributes the settings UI, and keeps every effect on DSH design tokens so themes apply cleanly. Wallpaper blur is clipped overscan (no content warping) with a whisper of dither noise to keep gradients band-free; a video the browser cannot decode falls back to the wallpaper's preview image. Scene and application wallpapers can only show their workshop preview — the bundle reads each preview's pixel size and presents low-resolution ones as sharp centered art over a blurred copy of themselves, instead of a mushy fullscreen stretch.
+- A **browser plugin** renders the chosen wallpaper on a fixed layer behind the app frame, contributes the settings UI, and keeps every effect on DSH design tokens so themes apply cleanly. Wallpaper blur is clipped overscan (no content warping) with a whisper of dither noise to keep gradients band-free; a video that repeatedly fails to decode (an unsupported container) falls back to its preview still, and the next Refresh retries the live media.
 
 The host answers from a 30-second inventory cache with stable per-wallpaper tokens (an in-flight stream is never killed by a background rebuild); discovery is resolved asynchronously and cached for ten minutes. The bundle registers no model tools and adds no prompt text.
 
 ## Limitations
 
-- Scene and application wallpapers render as still images; their live animation remains Wallpaper Engine's desktop job.
+- Scene and application wallpapers are not listed at all: they are Wallpaper Engine's private `.pkg` scene packages, and their live animation can only be rendered by Wallpaper Engine itself on the desktop.
 - Web wallpapers run isolated from the page's storage, so ones that persist state across loads won't keep it.
 - The glass effect reads DSH design tokens; if a future shell redesign renames them, frosting degrades to plain transparency.
 

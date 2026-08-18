@@ -33,10 +33,12 @@ permissions:
   contents: write # creating the GitHub Release on tag pushes
 
 # A release created with a brand-new tag fires BOTH push:tags and
-# release:published — one run at a time, and a newer trigger supersedes.
+# release:published. Serialise them WITHOUT cancelling: an in-flight publish
+# must never be killed mid-`npm publish`; the duplicate-version run simply
+# fails harmlessly at the npm step instead.
 concurrency:
   group: publish
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   publish:

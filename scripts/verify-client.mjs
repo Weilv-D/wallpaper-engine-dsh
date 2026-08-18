@@ -32,6 +32,10 @@ function check(label, cond, detail) {
 }
 
 // ── Minimal-but-real DOM mock ────────────────────────────────────────────────
+// Canvas pixel source for the smart-veil luminance sampler: set before firing
+// a media load event, and the fake 2D context reports exactly these bytes.
+let mockCanvasPixels = null;
+
 function walkAll(root, out) {
   for (const c of root.children) {
     out.push(c);
@@ -90,6 +94,12 @@ function makeEl(tag) {
     contains(node) { return walkAll(el, []).includes(node); },
     play() { el.playCalled = (el.playCalled || 0) + 1; return { catch() {} }; },
     pause() { el.pauseCalled = (el.pauseCalled || 0) + 1; },
+    ...(tag.toLowerCase() === 'canvas' ? {
+      getContext: () => ({
+        drawImage() {},
+        getImageData: () => ({ data: mockCanvasPixels || new Uint8Array(0) }),
+      }),
+    } : {}),
     querySelector(sel) {
       const all = walkAll(el, []);
       if (sel.startsWith('.')) return all.find((n) => n._classes.has(sel.slice(1))) || null;
@@ -119,8 +129,9 @@ const documentMock = {
     return bodyEl.querySelector(sel);
   },
   querySelectorAll: (sel) => bodyEl.querySelectorAll(sel),
-  addEventListener() {},
-  removeEventListener() {},
+  _listeners: {},
+  addEventListener(type, fn) { this._listeners[type] = fn; },
+  removeEventListener(type) { delete this._listeners[type]; },
   visibilityState: 'visible',
   head: headEl,
   body: bodyEl,
@@ -168,15 +179,13 @@ const fetchMock = (url) => {
   return Promise.resolve({
     ok: true, status: 200,
     json: () => Promise.resolve({
-      installDir: 'D:/we', total: 4, portableCount: 2,
+      installDir: 'D:/we', total: 2, portableCount: 2,
       playlists: [
         { id: 'pl-0', name: 'WE playlist', order: 'sequence', delay: null, wallpaperIds: ['a', 'b'], total: 2, portableCount: 2 },
       ],
       wallpapers: [
-        { id: 'a', title: 'Video A', type: 'video', playable: true, media: `/we-background/media/tokA-${n}`, preview: null },
-        { id: 'b', title: 'Web B', type: 'web', playable: true, media: `/we-background/media/tokB-${n}`, preview: null },
-        { id: 'c', title: 'Scene C', type: 'scene', playable: false, media: null, preview: null },
-        { id: 'd', title: 'Scene D', type: 'scene', playable: false, media: null, preview: `/we-background/preview/tokD-${n}`, previewW: 320, previewH: 320 },
+        { id: 'a', title: 'Video A', type: 'video', playable: true, media: `/we-background/media/tokA-${n}`, preview: `/we-background/preview/pA-${n}` },
+        { id: 'b', title: 'Web B', type: 'web', playable: true, media: `/we-background/media/tokB-${n}`, preview: `/we-background/preview/pB-${n}` },
       ],
     }),
   });
@@ -334,10 +343,9 @@ setTimeout(async () => {
   if (tree) {
     const buttons = collectButtons(tree);
     const cards = buttons.filter((b) => String(b.props.className || '').startsWith('webg-card'));
-    check('grid shows close + 3 usable cards (a, b, static d)', cards.length === 4, cards.length);
-    check('scene wallpaper without preview stays unselectable', !JSON.stringify(cards).includes('Scene C'));
-    check('scene wallpaper with preview is selectable (静态)',
-      cards.some((b) => b.props.title === 'Scene D(静态)'));
+    check('grid shows close + both playable cards (a, b)', cards.length === 3, cards.length);
+    check('unplayable kinds never surface in the grid',
+      !JSON.stringify(cards).includes('Scene'));
 
     // Refresh: inventory rebuilds hand out fresh tokens, but the playing
     // wallpaper must NOT remount (same id → same layer element).
@@ -389,20 +397,64 @@ setTimeout(async () => {
       const bar = overlay && overlay.children.find((c) => c._classes && c._classes.has('webg-adjust-bar'));
       const doneBtn = bar && bar.children.find((c) => c.tagName === 'BUTTON');
       check('adjust bar has a Done button', Boolean(doneBtn));
-      if (doneBtn && doneBtn._listeners && doneBtn._listeners.click) {
-        // Simulate a pan through the recorded pointer handlers.
-        if (overlay._listeners && overlay._listeners.pointerdown && overlay._listeners.pointermove &&
-            overlay._listeners.pointerup) {
-          overlay._listeners.pointerdown({ clientX: 500, clientY: 300, target: overlay });
-          overlay._listeners.pointermove({ clientX: 560, clientY: 300 });
-          overlay._listeners.pointerup({});
-          check('drag pans the crop (offsets persisted)',
-            JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']).offsetX > 0);
+      // Presence FIRST — the guarded interactions below must not be able to
+      // vacuously pass if the client stopped attaching any handler.
+      const overlayHandlers = overlay && overlay._listeners;
+      check('adjust overlay attaches pointer + wheel handlers',
+        Boolean(overlayHandlers && overlayHandlers.pointerdown && overlayHandlers.pointermove &&
+          overlayHandlers.pointerup && overlayHandlers.wheel));
+      check('Esc keydown handler registered on document',
+        Boolean(documentMock._listeners.keydown));
+      if (overlayHandlers && overlayHandlers.pointerdown) {
+        // Pan: 60px right (clientWidth 0 → media-box maths still ≥0 offsets).
+        overlayHandlers.pointerdown({ clientX: 500, clientY: 300, target: overlay });
+        overlayHandlers.pointermove({ clientX: 560, clientY: 300 });
+        overlayHandlers.pointerup({});
+        check('drag pans the crop (offsets persisted)',
+          JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']).offsetX > 0);
+        // Wheel zoom: deltaY<0 zooms in, clamped 0.25..4, persisted.
+        overlayHandlers.wheel({ deltaY: -240, preventDefault() {} });
+        const zoomed = JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']).zoom;
+        check('wheel-up zooms in and persists', zoomed > 1, String(zoomed));
+        overlayHandlers.wheel({ deltaY: 100000, preventDefault() {} });
+        check('extreme wheel-out clamps at 0.25',
+          JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']).zoom === 0.25);
+        // Esc exits exactly like Done.
+        if (documentMock._listeners.keydown) {
+          documentMock._listeners.keydown({ key: 'Escape' });
+          check('Esc closes the overlay and returns the layer',
+            !documentMock.body.children.some((c) => c._classes && c._classes.has('webg-adjust')) &&
+              documentMock.getElementById('wallpaper-engine-dsh-layer') === layerBefore);
         }
-        doneBtn._listeners.click();
-        check('done closes the overlay and returns the layer',
-          !documentMock.body.children.some((c) => c._classes && c._classes.has('webg-adjust')) &&
-            documentMock.getElementById('wallpaper-engine-dsh-layer') === layerBefore);
+        // Reset crop: a second session restores 1/0/0 through the button.
+        if (documentMock.getElementById('wallpaper-engine-dsh-layer')) {
+          const resetTree = pickerRenders[0]();
+          const resetBtn = collectButtons(resetTree).find((b) =>
+            Array.isArray(b.children) && b.children.includes('重置裁剪'));
+          check('reset-crop button appears once crop is non-default', Boolean(resetBtn));
+          if (resetBtn) {
+            resetBtn.props.onClick();
+            const persisted = JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']);
+            check('reset restores zoom 1 and zero offsets',
+              persisted.zoom === 1 && persisted.offsetX === 0 && persisted.offsetY === 0);
+          }
+        }
+      }
+      if (doneBtn && doneBtn._listeners && doneBtn._listeners.click &&
+          documentMock.getElementById('wallpaper-engine-dsh-layer') === layerBefore &&
+          !documentMock.body.children.some((c) => c._classes && c._classes.has('webg-adjust'))) {
+        // Overlay already closed by Esc above — verify Done still works by
+        // reopening once more.
+        adjustBtn.props.onClick();
+        const overlay2 = documentMock.body.children.find((c) => c._classes && c._classes.has('webg-adjust'));
+        const bar2 = overlay2 && overlay2.children.find((c) => c._classes && c._classes.has('webg-adjust-bar'));
+        const done2 = bar2 && bar2.children.find((c) => c.tagName === 'BUTTON');
+        if (done2 && done2._listeners && done2._listeners.click) {
+          done2._listeners.click();
+          check('done closes the overlay and returns the layer',
+            !documentMock.body.children.some((c) => c._classes && c._classes.has('webg-adjust')) &&
+              documentMock.getElementById('wallpaper-engine-dsh-layer') === layerBefore);
+        }
       }
     }
 
@@ -440,39 +492,97 @@ setTimeout(async () => {
     if (sliders.length === 4) {
       const scrimSlider = sliders[1]; // 壁纸模糊, 暗化, 边框, 玻璃
       bodyEl.setAttribute('data-ds-dark-theme', '');
-      scrimSlider.props.onInput({ target: { value: '25', style: { setProperty() {} } } });
+      scrimSlider.props.onChange({ target: { value: '25', style: { setProperty() {} } } });
       check('veil flips to black in dark theme',
         bodyEl.style._props['--webg-scrim-color'] === 'rgba(0,0,0,0.25)',
         bodyEl.style._props['--webg-scrim-color']);
       bodyEl.removeAttribute('data-ds-dark-theme');
-      scrimSlider.props.onInput({ target: { value: '25', style: { setProperty() {} } } });
+      scrimSlider.props.onChange({ target: { value: '25', style: { setProperty() {} } } });
       check('veil returns to white in light theme',
         bodyEl.style._props['--webg-scrim-color'] === 'rgba(255,255,255,0.25)');
+
+      // Blur>0 complement of the fast path: the filter pipeline engages and
+      // the noise overlay comes back with its formula-driven opacity.
+      const blurSlider = sliders[0];
+      blurSlider.props.onChange({ target: { value: '20', style: { setProperty() {} } } });
+      check('blur>0 engages the filter pipeline',
+        bodyEl.style._props['--webg-media-filter'] === 'blur(20px) saturate(1.08)',
+        bodyEl.style._props['--webg-media-filter']);
+      check('noise overlay displayed at blur>0',
+        bodyEl.style._props['--webg-noise-display'] === 'block');
+      check('noise opacity follows the formula',
+        bodyEl.style._props['--webg-noise-opacity'] === (0.02 + 20 * 0.0004).toFixed(4),
+        bodyEl.style._props['--webg-noise-opacity']);
+      blurSlider.props.onChange({ target: { value: '0', style: { setProperty() {} } } });
+      check('back to zero blur restores the fast path',
+        bodyEl.style._props['--webg-media-filter'] === 'none' &&
+          bodyEl.style._props['--webg-noise-display'] === 'none');
+    }
+
+    // Smart veil math: fire the media's loadeddata so the sampler runs over
+    // the fake canvas pixels. Luminance 1.0 (white) in dark theme needs a
+    // 0.5 floor → alpha = max(user 0.25, 0.5); a black frame needs none.
+    {
+      const liveVideo = documentMock.getElementById('wallpaper-engine-dsh-layer') &&
+        documentMock.getElementById('wallpaper-engine-dsh-layer').querySelector('video');
+      check('video carries a loadeddata sampler hook',
+        Boolean(liveVideo && liveVideo._listeners && liveVideo._listeners.loadeddata));
+      if (liveVideo && liveVideo._listeners && liveVideo._listeners.loadeddata) {
+        const white = new Uint8Array(16 * 16 * 4).fill(255);
+        const black = new Uint8Array(16 * 16 * 4); // zeros
+        bodyEl.setAttribute('data-ds-dark-theme', '');
+        mockCanvasPixels = white;
+        liveVideo._listeners.loadeddata();
+        check('bright frame raises the dark-theme veil floor to 0.5',
+          bodyEl.style._props['--webg-scrim-color'] === 'rgba(0,0,0,0.5)',
+          bodyEl.style._props['--webg-scrim-color']);
+        mockCanvasPixels = black;
+        liveVideo._listeners.loadeddata();
+        check('dark frame needs no floor (user scrim stands)',
+          bodyEl.style._props['--webg-scrim-color'] === 'rgba(0,0,0,0.25)',
+          bodyEl.style._props['--webg-scrim-color']);
+        bodyEl.removeAttribute('data-ds-dark-theme');
+        liveVideo._listeners.loadeddata();
+        check('dark frame in LIGHT theme raises the white veil to 0.5',
+          bodyEl.style._props['--webg-scrim-color'] === 'rgba(255,255,255,0.5)',
+          bodyEl.style._props['--webg-scrim-color']);
+        mockCanvasPixels = null;
+      }
     }
 
     // Smart veil toggle present in the monitor row.
     check('smart veil toggle present', JSON.stringify(tree).includes('智能可视'));
 
-    // Static wallpaper: selecting scene D renders its preview as an <img>.
-    const staticCard = cards.find((b) => b.props.title === 'Scene D(静态)');
-    if (staticCard) {
-      // Ambient engages only under cover fit — restore it (an earlier block
-      // switched to contain for the fit test).
-      if (fitSelect) fitSelect.props.onChange({ target: { value: 'cover' } });
-      staticCard.props.onClick();
-      const staticLayer = documentMock.getElementById('wallpaper-engine-dsh-layer');
-      const node = staticLayer && staticLayer.children[0];
-      check('low-res scene card shows the 低清 badge', JSON.stringify(cards).includes('低清'));
-      // previewW 320 < 1200 → ambient: wrapper div with blurred bg + sharp fg.
-      check('low-res static renders ambient (blurred bg + sharp fg)',
-        Boolean(node) && node.tagName === 'DIV' &&
-          String(node.className).includes('webg-ambient') &&
-          node.children.length === 2 &&
-          node.children.every((c) => c.tagName === 'IMG'),
-        node && node.tagName + '/' + node.children.length);
-      if (node && node.children.length === 2) {
-        check('ambient fg uses the preview url', /\/preview\//.test(node.children[1].src || ''));
-        check('ambient fg carries no sandbox/iframe semantics', !node.children[1].attributes.sandbox);
+    // Decode-failure demotion: fire the video's error handler twice → the
+    // first triggers a token refresh+remount, the second demotes video A to
+    // its preview still; manual refresh clears the demotion again.
+    const demoteVideo = documentMock.getElementById('wallpaper-engine-dsh-layer').children[0];
+    if (demoteVideo && demoteVideo._listeners && demoteVideo._listeners.error) {
+      demoteVideo._listeners.error();
+      await new Promise((r) => setTimeout(r, 20));
+      check('first decode error triggers a token refresh+remount',
+        fetchCalls.some((u) => u.includes('refresh=1')));
+      const remounted = documentMock.getElementById('wallpaper-engine-dsh-layer').children[0];
+      if (remounted && remounted._listeners && remounted._listeners.error) {
+        remounted._listeners.error();
+        await new Promise((r) => setTimeout(r, 20));
+        const after = documentMock.getElementById('wallpaper-engine-dsh-layer').children[0];
+        check('second decode error demotes to the preview still',
+          after && after.tagName === 'IMG' && /\/preview\//.test(after.src || ''),
+          after && after.tagName + ' ' + (after.src || ''));
+        check('demotion flagged in the status row',
+          JSON.stringify(pickerRenders[0]()).includes('媒体无法解码'));
+        // Manual refresh retries the video (demotion cleared).
+        const treeAfter = pickerRenders[0]();
+        const refreshAgain = collectButtons(treeAfter).find((b) =>
+          Array.isArray(b.children) && b.children.includes('刷新'));
+        if (refreshAgain) {
+          refreshAgain.props.onClick();
+          await new Promise((r) => setTimeout(r, 20));
+          const revived = documentMock.getElementById('wallpaper-engine-dsh-layer').children[0];
+          check('manual refresh clears the demotion and retries the video',
+            revived && revived.tagName === 'VIDEO', revived && revived.tagName);
+        }
       }
     }
 

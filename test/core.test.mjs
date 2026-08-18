@@ -356,29 +356,7 @@ test('buildInventoryFrom: assembles wallpapers + playlists from a fixture tree',
   assert.equal(inv.playlists[0].unresolvedCount, 1);
 }));
 
-test('buildInventoryFrom: scene projects are counted but never playable or minted', () => withTemp(async (t) => {
-  const { installDir, lib } = await fixtureInventory(t);
-  const p4Dir = join(lib, 'steamapps', 'workshop', 'content', '431960', 'p4');
-  mkdirSync(p4Dir, { recursive: true });
-  writeFileSync(join(p4Dir, 'project.json'), JSON.stringify({ title: 'Scene', type: 'scene', file: 'wall.pkg' }));
-  writeFileSync(join(p4Dir, 'wall.pkg'), 'pkg');
-
-  // Fresh spy per build — never reuse an accumulating array across builds.
-  const mints = [];
-  const inv = await core.buildInventoryFrom(
-    { installDir, libraryRoots: [lib] },
-    { mint: (e) => { mints.push(e); return 'tok-' + mints.length; } },
-  );
-  assert.equal(inv.total, 3);
-  assert.equal(inv.portableCount, 2);
-  const scene = inv.wallpapers.find((w) => w.id === 'p4');
-  assert.equal(scene.playable, false);
-  assert.equal(scene.media, null);
-  assert.equal(scene.preview, null); // no preview file declared → nothing minted
-  assert.equal(mints.length, 2); // exactly p1:media and p3:media
-}));
-
-test('buildInventoryFrom: scene with a preview gets a preview URL but no media', () => withTemp(async (t) => {
+test('buildInventoryFrom: scene/application entries are excluded and never minted', () => withTemp(async (t) => {
   const { installDir, lib } = await fixtureInventory(t);
   const p4Dir = join(lib, 'steamapps', 'workshop', 'content', '431960', 'p4');
   mkdirSync(p4Dir, { recursive: true });
@@ -388,14 +366,18 @@ test('buildInventoryFrom: scene with a preview gets a preview URL but no media',
   writeFileSync(join(p4Dir, 'wall.pkg'), 'pkg');
   writeFileSync(join(p4Dir, 'thumb.jpg'), 'jpg');
 
+  // Fresh spy per build — never reuse an accumulating array across builds.
+  const mints = [];
   const inv = await core.buildInventoryFrom(
     { installDir, libraryRoots: [lib] },
-    { mint: (e) => 'tok-' + e.key },
+    { mint: (e) => { mints.push(e); return 'tok-' + mints.length; } },
   );
-  const scene = inv.wallpapers.find((w) => w.id === 'p4');
-  assert.equal(scene.playable, false);
-  assert.equal(scene.media, null);
-  assert.ok(scene.preview.endsWith('/preview/tok-p4:preview'));
+  // .pkg scenes are not browser-renderable: absent from the inventory
+  // entirely (not counted, not selectable, not even minted a preview).
+  assert.equal(inv.total, 2);
+  assert.equal(inv.portableCount, 2);
+  assert.ok(!inv.wallpapers.some((w) => w.id === 'p4'));
+  assert.equal(mints.length, 2); // exactly p1:media and p3:media
 }));
 
 test('buildInventoryFrom: a falsy mint never produces "…/null" URLs', () => withTemp(async (t) => {
@@ -419,64 +401,28 @@ test('buildInventoryFrom: missing install yields empty structure, not an error',
   assert.equal(inv.portableCount, 0);
 });
 
-// ── Image dimension sniffing ─────────────────────────────────────────────────
-
-/** Minimal PNG: signature + IHDR with big-endian width/height. */
-function pngBytes(w, h) {
-  const b = Buffer.alloc(24);
-  Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]).copy(b, 0);
-  b.writeUInt32BE(13, 8); // chunk length
-  b.write('IHDR', 12, 'latin1');
-  b.writeUInt32BE(w, 16);
-  b.writeUInt32BE(h, 20);
-  return b;
-}
-
-/** Minimal JPEG: SOI + SOF0 carrying height/width. */
-function jpegBytes(w, h) {
-  const b = Buffer.alloc(20);
-  b[0] = 0xFF; b[1] = 0xD8;
-  b[2] = 0xFF; b[3] = 0xC0; // SOF0
-  b.writeUInt16BE(0x11, 4); // segment length
-  b[6] = 0x08; // precision
-  b.writeUInt16BE(h, 7);
-  b.writeUInt16BE(w, 9);
-  return b;
-}
-
-test('sniffImageSize: PNG, JPEG, GIF headers; garbage is null', () => {
-  assert.deepEqual(core.sniffImageSize(pngBytes(1920, 1080)), { w: 1920, h: 1080 });
-  assert.deepEqual(core.sniffImageSize(jpegBytes(1536, 1024)), { w: 1536, h: 1024 });
-  const gif = Buffer.alloc(24);
-  Buffer.from('GIF89a', 'latin1').copy(gif, 0);
-  gif.writeUInt16LE(320, 6);
-  gif.writeUInt16LE(240, 8);
-  assert.deepEqual(core.sniffImageSize(gif), { w: 320, h: 240 });
-  assert.equal(core.sniffImageSize(Buffer.from('not an image at all……')), null);
-  assert.equal(core.sniffImageSize(null), null);
-});
-
-test('buildInventoryFrom: scene previews carry sniffed dimensions', async () => {
+test('buildInventoryFrom: scene/application entries are filtered out entirely', async () => {
   await withTemp(async (tmp) => {
-    const dir = join(tmp, 'steamapps', 'workshop', 'content', '431960', 'sc1');
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'project.json'), JSON.stringify({
-      title: 'Tiny', type: 'scene', file: 'scene.pkg', preview: 'p.jpg',
-    }));
-    writeFileSync(join(dir, 'p.jpg'), jpegBytes(256, 256));
-    const inv = await core.buildInventoryFrom(
-      { installDir: null, libraryRoots: [tmp] },
-      { mint: () => 't', readBuffer: async () => jpegBytes(256, 256) },
-    );
-    const sc = inv.wallpapers.find((w) => w.id === 'sc1');
-    assert.ok(sc);
-    assert.equal(sc.previewW, 256);
-    assert.equal(sc.previewH, 256);
-    // Without readBuffer (io too old / not injected) the fields are null.
-    const inv2 = await core.buildInventoryFrom(
-      { installDir: null, libraryRoots: [tmp] },
-      { mint: () => 't' },
-    );
-    assert.equal(inv2.wallpapers.find((w) => w.id === 'sc1').previewW, null);
+    const ws = join(tmp, 'steamapps', 'workshop', 'content', '431960');
+    const mk = async (id, type) => {
+      const dir = join(ws, id);
+      mkdirSync(dir, { recursive: true });
+      const project = { title: 'W' + id, type, file: type === 'video' ? 'v.mp4' : 'index.html', preview: 'p.jpg' };
+      writeFileSync(join(dir, 'project.json'), JSON.stringify(project));
+      if (type === 'video') writeFileSync(join(dir, 'v.mp4'), 'x');
+      else writeFileSync(join(dir, 'index.html'), '<html></html>');
+      writeFileSync(join(dir, 'p.jpg'), 'jpg');
+    };
+    await mk('v1', 'video');
+    await mk('w1', 'web');
+    await mk('s1', 'scene');
+    await mk('a1', 'application');
+    const inv = await core.buildInventoryFrom({ installDir: null, libraryRoots: [tmp] }, { mint: () => 't' });
+    const types = inv.wallpapers.map((w) => w.type).sort();
+    assert.deepEqual(types, ['video', 'web']); // no scene, no application
+    assert.equal(inv.total, 2);
+    assert.equal(inv.portableCount, 2);
+    // Previews still ship for playable entries (decode-failure fallback).
+    assert.ok(inv.wallpapers.every((w) => w.preview && w.preview.startsWith('/we-background/preview/')));
   });
 });
