@@ -11,7 +11,7 @@ import {
   mkdirSync, mkdtempSync, rmSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve, sep } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import * as core from '../lib/core.js';
 
@@ -35,9 +35,12 @@ test('parseKeyValues: nesting, escapes, comments, bare tokens', () => {
     }
   `);
   const root = tree.libraryfolders;
-  assert.equal(root['0'].path.replace(/\//g, sep), resolve('C:\\Program Files (x86)\\Steam'));
+  // Parser output is the RAW VDF string with escapes unfolded — assert the
+  // literal characters, NOT path.resolve() of a Windows path (resolve() only
+  // behaves Windows-ly on Windows; this suite also runs in Linux CI).
+  assert.equal(root['0'].path, 'C:\\Program Files (x86)\\Steam');
   assert.equal(root['0'].apps['431960'], '1700000000');
-  assert.equal(root['1'].replace(/\//g, sep), resolve('D:\\SteamLibrary'));
+  assert.equal(root['1'], 'D:\\SteamLibrary');
 });
 
 test('parseKeyValues: later duplicate key wins; malformed input degrades', () => {
@@ -74,7 +77,10 @@ test('librariesFromVdfText: garbage in, empty out', () => {
 
 test('steamPathFromRegQuery: parses reg.exe output, tolerates junk', () => {
   const out = '\r\nHKEY_CURRENT_USER\\Software\\Valve\\Steam\r\n    SteamPath    REG_SZ    D:/Apps/Steam\r\n\r\n';
-  assert.equal(core.steamPathFromRegQuery(out), resolve('D:/Apps/Steam'));
+  // The function returns normalize()'d output (native separators per OS);
+  // compare in a platform-free canonical form instead of resolve().
+  const norm = (s) => String(s).toLowerCase().replace(/[\\/]/g, '');
+  assert.equal(norm(core.steamPathFromRegQuery(out)), 'd:appssteam');
   assert.equal(core.steamPathFromRegQuery('ERROR: The system was unable to find the specified registry key or value.'), null);
 });
 
@@ -152,7 +158,7 @@ test('readProject: valid video project; preview containment; escaping file rejec
   assert.equal(p.fileAbs, resolve(dir, 'ocean.mp4'));
   assert.equal(p.previewAbs, resolve(dir, 'preview.jpg'));
 
-  writeFileSync(join(dir, 'project.json'), JSON.stringify({ file: '..\\..\\secret.mp4' }));
+  writeFileSync(join(dir, 'project.json'), JSON.stringify({ file: '../../secret.mp4' }));
   assert.equal(core.readProject(dir), null); // escapes project dir → rejected
 
   writeFileSync(join(dir, 'project.json'), JSON.stringify({ file: 'scene.pkg', type: 'unknown-kind' }));
