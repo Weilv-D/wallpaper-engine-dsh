@@ -52,6 +52,7 @@ Unlike simpler integrations, **multi-file Web wallpapers work here**: the host s
 - **Sandboxed web wallpapers.** Third-party wallpaper JS runs in an iframe with `sandbox="allow-scripts"` (no `allow-same-origin`) and `referrerpolicy="no-referrer"` — an opaque origin that cannot touch DSH storage, cookies, or APIs.
 - **Loopback + nosniff.** All responses are same-origin with `X-Content-Type-Options: nosniff`.
 - Only enumerated files are ever served; there is no arbitrary-file route.
+- **LAN note:** if you bind `dsh web` beyond loopback, `/we-background/*` (inventory JSON incl. install paths + wallpaper media) becomes reachable on that interface too. Media is gated by unguessable tokens, but the inventory itself is not authenticated — intended for a personal loopback setup.
 
 ## Install
 
@@ -89,10 +90,12 @@ Restart `dsh web`, then open **Settings → General → 壁纸背景 (Wallpaper 
 
 ```sh
 npm install        # prepare hook builds lib/client.js automatically
-npm test           # unit tests for the pure core (node:test)
+npm test           # unit tests: pure core parsing + inventory assembly (node:test)
 npm run build      # regenerate lib/client.js from src/client.js
 npm run verify     # boot the emitted bundle in a vm sandbox and assert behaviour
 ```
+
+The test suite covers the parser, discovery helpers, path containment, playlist resolution, Range parsing, **and the inventory assembly the host serves over HTTP** (against fixture trees with a token-mint spy).
 
 `lib/core.js` and `lib/index.js` are plain ESM — no build step. `lib/client.js` is a **compiled artifact**; edit `src/client.js` and rebuild. `npm run prepublishOnly` runs the full gate: test → build → verify.
 

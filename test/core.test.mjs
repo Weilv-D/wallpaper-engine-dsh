@@ -261,3 +261,76 @@ test('mimeFor: media, web assets, fallback', () => {
   assert.equal(core.mimeFor('d.bin'), 'application/octet-stream');
   assert.equal(core.mimeFor('noext'), 'application/octet-stream');
 });
+
+test('parseRangeHeader: multi-range and malformed units are rejected', () => {
+  assert.deepEqual(core.parseRangeHeader('bytes=0-1,5-6', 100), { error: true });
+  assert.deepEqual(core.parseRangeHeader('bytes=abc', 100), { error: true });
+  assert.deepEqual(core.parseRangeHeader('bytes=', 100), { error: true });
+});
+
+// ── Inventory assembly (pure; what the host serves over HTTP) ────────────────
+
+test('buildInventoryFrom: assembles wallpapers + playlists from a fixture tree', () => withTemp((t) => {
+  const installDir = join(t, 'we');
+  const p1Dir = join(installDir, 'projects', 'defaultprojects', 'p1');
+  mkdirSync(p1Dir, { recursive: true });
+  writeFileSync(join(p1Dir, 'project.json'), JSON.stringify({ title: 'One', type: 'video', file: 'a.mp4' }));
+  writeFileSync(join(p1Dir, 'a.mp4'), 'video-bytes');
+  writeFileSync(join(installDir, 'config.json'), JSON.stringify({
+    profile: { general: { playlists: [
+      { name: 'Mix', items: [join(p1Dir, 'a.mp4'), join(t, 'lib', 'steamapps', 'workshop', 'content', '431960', 'p3', 'index.html')], settings: { order: 'random' } },
+    ] } },
+  }));
+
+  const lib = join(t, 'lib');
+  const p3Dir = join(lib, 'steamapps', 'workshop', 'content', '431960', 'p3');
+  mkdirSync(p3Dir, { recursive: true });
+  writeFileSync(join(p3Dir, 'project.json'), JSON.stringify({ title: 'Weby', type: 'web', file: 'index.html' }));
+  writeFileSync(join(p3Dir, 'index.html'), '<html></html>');
+  writeFileSync(join(p3Dir, 'app.js'), '// asset');
+
+  const mints = [];
+  const inv = core.buildInventoryFrom(
+    { installDir, libraryRoots: [lib] },
+    { mint: (entry) => { mints.push(entry); return 'tok-' + mints.length; } },
+  );
+
+  assert.equal(inv.total, 2);
+  assert.equal(inv.portableCount, 2);
+  const [w1, w2] = inv.wallpapers;
+  assert.equal(w1.id, 'p1'); assert.equal(w1.type, 'video'); assert.equal(w1.playable, true);
+  assert.ok(w1.media.endsWith('/media/tok-1'));
+  assert.equal(w2.id, 'p3'); assert.equal(w2.type, 'web'); assert.equal(w2.playable, true);
+
+  // mint entries carry containment info the host needs for sub-assets.
+  assert.equal(mints[0].abs, join(p1Dir, 'a.mp4'));
+  assert.equal(mints[0].rootDir, null); // video: no sub-assets
+  assert.equal(mints[1].abs, join(p3Dir, 'index.html'));
+  assert.equal(mints[1].rootDir, p3Dir); // web: sub-assets allowed inside dir
+
+  // Playlist resolved both items; the scene-free list is fully portable.
+  assert.equal(inv.playlists.length, 1);
+  assert.deepEqual(inv.playlists[0].wallpaperIds, ['p1', 'p3']);
+  assert.equal(inv.playlists[0].portableCount, 2);
+  assert.equal(inv.playlists[0].unresolvedCount, 0);
+
+  // A scene project is counted but never playable / never minted.
+  const p4Dir = join(lib, 'steamapps', 'workshop', 'content', '431960', 'p4');
+  mkdirSync(p4Dir, { recursive: true });
+  writeFileSync(join(p4Dir, 'project.json'), JSON.stringify({ title: 'Scene', type: 'scene', file: 'wallpaperscript.pkg' }));
+  writeFileSync(join(p4Dir, 'wallpaperscript.pkg'), 'pkg');
+  const inv2 = core.buildInventoryFrom({ installDir, libraryRoots: [lib] }, { mint: (e) => { mints.push(e); return 'tok-' + mints.length; } });
+  assert.equal(inv2.total, 3);
+  assert.equal(inv2.portableCount, 2);
+  assert.equal(inv2.wallpapers.every((w) => w.id !== 'p4' || !w.playable), true);
+  assert.equal(mints.length, 4); // p1 media, p3 media, p4 preview-less: no mint for p4
+}));
+
+test('buildInventoryFrom: missing install yields empty structure, not an error', () => {
+  const inv = core.buildInventoryFrom({ installDir: null, libraryRoots: [] }, { mint: () => 'x' });
+  assert.equal(inv.installDir, null);
+  assert.deepEqual(inv.wallpapers, []);
+  assert.deepEqual(inv.playlists, []);
+  assert.equal(inv.total, 0);
+  assert.equal(inv.portableCount, 0);
+});
