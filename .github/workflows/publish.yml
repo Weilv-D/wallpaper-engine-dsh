@@ -49,8 +49,9 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
 
-      # Trusted publishing needs a recent npm CLI.
-      - run: npm install -g npm@latest
+      # Trusted publishing needs npm >= 11.5.1; pin the major for
+      # reproducibility instead of floating on npm@latest.
+      - run: npm install -g npm@11
 
       # Quality gate — same as local prepublishOnly.
       - run: npm test

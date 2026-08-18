@@ -75,6 +75,8 @@ function makeEl(tag) {
     removeAttribute(k) { if (k === 'id') el._id = ''; delete el.attributes[k]; },
     addEventListener() {},
     removeEventListener() {},
+    play() { el.playCalled = (el.playCalled || 0) + 1; return { catch() {} }; },
+    pause() { el.pauseCalled = (el.pauseCalled || 0) + 1; },
     querySelector(sel) {
       const all = walkAll(el, []);
       if (sel.startsWith('.')) return all.find((n) => n._classes.has(sel.slice(1))) || null;
@@ -182,6 +184,22 @@ vm.createContext(sandbox);
 new vm.Script(code, { filename: 'client.js' }).runInContext(sandbox);
 
 check('module registered with __ModuleLoader__', cap.handoff && cap.handoff.id === 'wallpaper-engine-dsh', cap.handoff && cap.handoff.id);
+
+// Mechanical i18n parity: a key missing from one STRINGS table only surfaces
+// when that language renders it — diff the two key sets up front instead.
+{
+  const src = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8');
+  const table = (lang) => {
+    const m = src.match(new RegExp(lang + ': \\{([\\s\\S]*?)\\n  \\}'));
+    return m ? [...m[1].matchAll(/^ {4}(\w+):/gm)].map((x) => x[1]) : [];
+  };
+  const zh = table('zh');
+  const en = table('en');
+  check('STRINGS zh/en key sets identical',
+    zh.length > 0 && zh.length === en.length &&
+      !zh.some((k) => !en.includes(k)) && !en.some((k) => !zh.includes(k)),
+    `zh=${zh.length} en=${en.length}`);
+}
 
 const React = {
   Fragment: 'Fragment',
@@ -343,6 +361,25 @@ setTimeout(async () => {
       posSelect.props.onChange({ target: { value: 'top' } });
       check('position switch applies immediately', bodyEl.style._props['--webg-position'] === 'top',
         bodyEl.style._props['--webg-position']);
+    }
+
+    // Play/pause: drives the real video element, not just the label.
+    const videoEl = documentMock.getElementById('wallpaper-engine-dsh-layer').children[0];
+    check('video starts playing (play() called at mount)', videoEl.playCalled >= 1,
+      String(videoEl.playCalled));
+    const pauseBtn = buttons.find((b) => Array.isArray(b.children) && b.children.includes('暂停'));
+    check('pause button present for a video wallpaper', Boolean(pauseBtn));
+    if (pauseBtn) {
+      pauseBtn.props.onClick();
+      check('pausing calls video.pause()', videoEl.pauseCalled >= 1, String(videoEl.pauseCalled));
+      const pausedTree = pickerRenders[0]();
+      const playBtn = collectButtons(pausedTree).find((b) =>
+        Array.isArray(b.children) && b.children.includes('播放'));
+      check('button flips to 播放', Boolean(playBtn));
+      if (playBtn) {
+        playBtn.props.onClick();
+        check('resuming calls video.play() again', videoEl.playCalled >= 2, String(videoEl.playCalled));
+      }
     }
 
     // Static wallpaper: selecting scene D renders its preview as an <img>.
