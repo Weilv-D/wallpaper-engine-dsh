@@ -269,3 +269,33 @@ test('inventory HEAD and method guards', async () => {
   const unknown = await get('/we-background/media/not-a-token');
   assert.equal(unknown.status, 404);
 });
+
+test('discovery: TTL re-runs after an explicit refresh (slot ownership)', async () => {
+  // A forced refresh must not pin the in-flight slot to a settled promise:
+  // after it, ordinary TTL builds still re-discover on schedule.
+  const calls = [];
+  const routes = new Map();
+  const dispose = createRouteRegistrar({
+    register(route) { routes.set(route.path, route.handler); return () => {}; },
+  }, {
+    discover: async () => { calls.push(Date.now()); return { installDir: null, libraryRoots: [] }; },
+    discoveryTtlMs: 40,
+    inventoryTtlMs: 0,
+  });
+  const handler = routes.get('/we-background/inventory');
+  const call = (qs = '') => new Promise((resolve) => {
+    handler({ method: 'GET', url: '/we-background/inventory' + qs, headers: {} },
+      { statusCode: 0, setHeader() {}, end: resolve });
+  });
+  try {
+    await new Promise((r) => setTimeout(r, 10)); // registration warm-up settles
+    const beforeForce = calls.length;
+    await call('?refresh=1'); // forced, nothing in flight
+    assert.equal(calls.length, beforeForce + 1);
+    await new Promise((r) => setTimeout(r, 60)); // discovery cache goes stale
+    await call(''); // plain TTL build
+    assert.equal(calls.length, beforeForce + 2); // re-discovered, not frozen
+  } finally {
+    dispose();
+  }
+});

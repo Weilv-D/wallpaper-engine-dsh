@@ -429,25 +429,20 @@ async function loadInventory(forceRefresh) {
     selection.rotationGroupId = "";
     persistSelection();
   }
-  if (selection.rotationEnabled) {
-    if (!selection.rotationGroupId) {
-      const usable = firstUsableGroup();
-      if (usable) selection.rotationGroupId = usable.id;
-      else selection.rotationEnabled = false;
-    } else if (rotationCandidates().length < 2) {
-      const usable = firstUsableGroup();
-      if (usable && usable.id !== selection.rotationGroupId) selection.rotationGroupId = usable.id;
-      else if (!usable) selection.rotationEnabled = false;
-    }
+  // Rotation bookkeeping. A chosen list is never migrated away from — a
+  // list with fewer than 2 usable wallpapers simply keeps rotation
+  // disarmed (the timer needs a pair to alternate), and a hand-picked
+  // wallpaper outside the active list keeps playing until the next
+  // rotation tick brings the list back around.
+  if (selection.rotationEnabled && !selection.rotationGroupId) {
+    const usable = firstUsableGroup();
+    if (usable) selection.rotationGroupId = usable.id;
+    else selection.rotationEnabled = false;
     persistSelection();
   }
 
   // Drop a selection whose wallpaper vanished or became unusable.
   if (selection.id && !selection.inventory.wallpapers.some((w) => w.id === selection.id && isPlayable(w))) {
-    selection.id = "";
-    persistSelection();
-  }
-  if (selection.rotationEnabled && selection.id && !rotationCandidates().some((w) => w.id === selection.id)) {
     selection.id = "";
     persistSelection();
   }
@@ -746,9 +741,10 @@ function attachMediaError(media, sel) {
       // The media itself is unusable here — fall back to the still preview.
       demotedToPreview.add(id);
       applySelection(id);
-    } else if (!w || (!w.preview && !w.media)) {
-      // Nothing renderable at all (preview-less or vanished from the
-      // inventory): clear the selection instead of a black screen loop.
+    } else {
+      // Unrenderable here with no preview to fall back on (or the entry has
+      // vanished from the inventory entirely): clear the selection rather
+      // than leave a dead element on the layer.
       applySelection("");
     }
   });
@@ -902,6 +898,30 @@ function schedule(fn, ms) {
   return token;
 }
 
+/**
+ * Swap re-minted URLs into the LIVE media element instead of remounting.
+ * An explicit refresh re-mints every token, so the element's old URL is
+ * already dead — the next seek or buffer-miss would 404 on it and trigger
+ * a full recovery restart. Hot-swapping keeps the element identity (and
+ * for video, the playback position) intact across the token change.
+ */
+function refreshLiveMediaUrls(layer) {
+  const video = layer.querySelector("video");
+  if (video && video.getAttribute("src") !== selection.url) {
+    const at = video.currentTime;
+    video.src = selection.url;
+    if (at > 0) {
+      video.addEventListener("loadedmetadata", () => {
+        try { video.currentTime = at; } catch { /* not seekable yet */ }
+      }, { once: true });
+    }
+  }
+  const img = layer.querySelector("img");
+  if (img && img.getAttribute("src") !== selection.url) img.src = selection.url;
+  const frame = layer.querySelector("iframe");
+  if (frame && frame.getAttribute("src") !== selection.url) frame.src = selection.url;
+}
+
 function syncLayers() {
   const existing = document.getElementById(LAYER_ID);
 
@@ -913,7 +933,9 @@ function syncLayers() {
     const gotKey = existing && existing.dataset.webgKey;
 
     if (existing && gotKey === wantKey && !forceRemount) {
-      // Same wallpaper — only play/pause may have changed.
+      // Same wallpaper — adopt any re-minted URL, then only play/pause may
+      // have changed.
+      refreshLiveMediaUrls(existing);
     } else {
       forceRemount = false;
       // Crossfade: the new layer fades in over the old one; the old layer
@@ -1563,13 +1585,17 @@ function MonitorRow(t, sel) {
 }
 
 function StatusRow(t, sel, group, usableCount, usableTotal) {
+  // "Auto-rotating" is claimed only when the timer is genuinely armed —
+  // rotation may be enabled on a list with fewer than 2 usable wallpapers,
+  // in which case nothing switches until the list grows.
+  const rotating = sel.rotationEnabled && usableCount >= 2;
   return React.createElement("div", { className: "webg-row" },
     React.createElement("span", { className: "webg-hint" },
       (group
         ? t.statusGroup(group.name, group.wallpaperIds.length, usableCount, group.interval,
             group.order === "random" ? t.random : t.sequence)
         : t.statusUsable(usableTotal)) +
-      (sel.rotationEnabled ? " · " + t.autoRotating : "") +
+      (rotating ? " · " + t.autoRotating : "") +
       (sel.autoPauseReasons.size > 0 ? " · " + t.autoPaused : "") +
       (sel.id && demotedToPreview.has(sel.id) ? " · " + t.decodeFallback : "") +
       (sel.inventory.installDir ? " · " + sel.inventory.installDir : "")),

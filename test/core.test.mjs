@@ -2,10 +2,11 @@
  * Unit tests for the pure logic layer (lib/core.js).
  * Run with: npm test
  *
- * Filesystem cases build fixture trees in a temp dir; everything else is
- * pure string/structure in, structure out. The enumeration/discovery
+ * Grouped by system flow — Steam-side inputs, discovery, containment,
+ * project model, playlists, HTTP semantics, inventory payload. Filesystem
+ * cases build fixture trees in a temp dir; the enumeration/discovery
  * functions are async (the host injects fs/promises so the event loop never
- * blocks); the default sync io works transparently under await.
+ * blocks) and the default sync io works transparently under await.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,9 +18,20 @@ import { join, resolve } from 'node:path';
 
 import * as core from '../lib/core.js';
 
-// ── KeyValues parser ─────────────────────────────────────────────────────────
+async function withTemp(fn) {
+  const dir = mkdtempSync(join(tmpdir(), 'webg-'));
+  try { return await fn(dir); } finally { rmSync(dir, { recursive: true, force: true }); }
+}
 
-test('parseKeyValues: nesting, escapes, comments, bare tokens', () => {
+function makeInstall(dir) {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'wallpaper32.exe'), '');
+  return dir;
+}
+
+// ── Steam-side inputs: KeyValues (VDF) and the registry ──────────────────────
+
+test('parseKeyValues: nesting, escapes, comments, duplicates; garbage degrades', () => {
   const tree = core.parseKeyValues(`
     // a comment
     "libraryfolders"
@@ -43,15 +55,14 @@ test('parseKeyValues: nesting, escapes, comments, bare tokens', () => {
   assert.equal(root['0'].path, 'C:\\Program Files (x86)\\Steam');
   assert.equal(root['0'].apps['431960'], '1700000000');
   assert.equal(root['1'], 'D:\\SteamLibrary');
-});
-
-test('parseKeyValues: later duplicate key wins; malformed input degrades', () => {
+  // Later duplicate keys win (Steam's own last-write behaviour); malformed
+  // input degrades to a partial tree instead of throwing.
   assert.equal(core.parseKeyValues('"a" { "k" "1" "k" "2" }').a.k, '2');
   assert.deepEqual(core.parseKeyValues(''), {});
   assert.equal(typeof core.parseKeyValues('"unterminated { "x" "y"'), 'object');
 });
 
-test('librariesFromVdfText: EXACT appid match (no substring false positives)', () => {
+test('librariesFromVdfText: EXACT appid ownership; legacy probes; garbage', () => {
   const libs = core.librariesFromVdfText(`
     "libraryfolders"
     {
@@ -60,15 +71,12 @@ test('librariesFromVdfText: EXACT appid match (no substring false positives)', (
       "2" "E:\\\\LegacyLibrary"
     }
   `);
-  // Owns 431960 exactly:
+  // Owns 431960 exactly — appid matching is an object-key lookup, so a
+  // substring sibling (1431960, 14319600) is NOT an owner:
   assert.ok(libs.some((p) => p.toLowerCase().endsWith('steam')));
-  // Only 14319600 / 1431960 as substrings → NOT owners:
   assert.ok(!libs.some((p) => p.toLowerCase().includes('steamlibrary')));
   // Legacy bare-string entry is included as a probe:
   assert.ok(libs.some((p) => p.toLowerCase().includes('legacylibrary')));
-});
-
-test('librariesFromVdfText: garbage in, empty out', () => {
   assert.deepEqual(core.librariesFromVdfText('not vdf at all'), []);
   assert.deepEqual(core.librariesFromVdfText('"other" { "x" "y" }'), []);
 });
@@ -82,36 +90,21 @@ test('steamPathFromRegQuery: parses reg.exe output, tolerates junk', () => {
   assert.equal(core.steamPathFromRegQuery('ERROR: The system was unable to find the specified registry key or value.'), null);
 });
 
-// ── Discovery against fixture trees ──────────────────────────────────────────
+// ── Discovery ranking ────────────────────────────────────────────────────────
 
-async function withTemp(fn) {
-  const dir = mkdtempSync(join(tmpdir(), 'webg-'));
-  try { return await fn(dir); } finally { rmSync(dir, { recursive: true, force: true }); }
-}
-
-function makeInstall(dir) {
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'wallpaper32.exe'), '');
-  return dir;
-}
-
-test('findInstallDir: first candidate containing the binary wins; dedupe', () => withTemp(async (t) => {
+test('findInstallDir: first binary-bearing candidate wins; dedupe; async io', () => withTemp(async (t) => {
   const a = join(t, 'a');
   const b = join(t, 'b');
   mkdirSync(a, { recursive: true }); // no binary
   makeInstall(b);
   assert.equal(await core.findInstallDir([a, b, b, join(t, 'missing')]), b);
   assert.equal(await core.findInstallDir([a, join(t, 'missing')]), null);
+  // The host injects fs/promises-backed io — discovery never blocks:
+  const io = { existsSync: async (p) => p.startsWith(b) };
+  assert.equal(await core.findInstallDir([a, b], io), b);
 }));
 
-test('findInstallDir: async io injection (what the host passes)', () => withTemp(async (t) => {
-  const yes = join(t, 'yes');
-  makeInstall(yes);
-  const io = { existsSync: async (p) => p.startsWith(yes) };
-  assert.equal(await core.findInstallDir([join(t, 'no'), yes], io), yes);
-}));
-
-test('installDirCandidates: registry root first, standalone fallback last', () => {
+test('installDirCandidates + workshopLibraryRoots: ranking and default-library recovery', () => withTemp(async (t) => {
   const c = core.installDirCandidates({
     registryRoot: 'D:\\Apps\\Steam',
     libraryRoots: ['E:\\SteamLibrary'],
@@ -121,45 +114,40 @@ test('installDirCandidates: registry root first, standalone fallback last', () =
   assert.equal(c[0], join('D:\\Apps\\Steam', 'steamapps', 'common', 'wallpaper_engine'));
   assert.ok(c.some((p) => p === join('E:\\SteamLibrary', 'steamapps', 'common', 'wallpaper_engine')));
   assert.equal(c[c.length - 1], 'C:\\Program Files (x86)\\Wallpaper Engine');
-});
 
-test('workshopLibraryRoots: default library recovered by binary presence', () => withTemp(async (t) => {
+  // The default library is never listed as a "path" entry inside its own
+  // libraryfolders.vdf — it is recovered by direct binary inspection.
   const probe = join(t, 'steam');
   makeInstall(join(probe, 'steamapps', 'common', 'wallpaper_engine'));
   const vdfLib = join(t, 'elsewhere');
   const libs = await core.workshopLibraryRoots([probe], [vdfLib]);
   assert.ok(libs.includes(vdfLib));
-  assert.ok(libs.includes(probe)); // recovered despite no vdf "path" entry
+  assert.ok(libs.includes(probe));
 }));
 
-// ── Containment ──────────────────────────────────────────────────────────────
+// ── Containment (the security boundary of path checks) ───────────────────────
 
-test('isInsideDir: containment, equality, traversal and sibling-prefix traps', () => withTemp(async (t) => {
+test('isInsideDir: equality, traversal, sibling-prefix traps, case rules', () => withTemp(async (t) => {
   const root = join(t, 'proj');
   assert.ok(core.isInsideDir(root, join(root, 'a', 'b.mp4')));
   assert.ok(core.isInsideDir(root, root));
   assert.ok(!core.isInsideDir(root, join(t, 'proj2', 'x'))); // sibling-prefix trap
   assert.ok(!core.isInsideDir(root, join(root, '..', 'outside'))); // resolves out
   assert.ok(!core.isInsideDir(root, join(t, 'other')));
-}));
-
-test('isInsideDir: case-insensitive on win32, sensitive elsewhere', () => {
+  // win32 semantics hold no matter which OS the check runs on (CI is Linux;
+  // the WE files themselves are Windows paths):
   assert.ok(core.isInsideDir('C:\\Root', 'c:\\root\\f.mp4', 'win32'));
   assert.ok(!core.isInsideDir('/Root', '/root/f.mp4', 'linux'));
-});
-
-test('isInsideDir: win32 sibling-prefix trap with backslash paths', () => {
-  // C:\RootX must NOT be contained in C:\Root — boundary is a separator,
-  // not a string prefix. (Canonicalization lowercases + normalizes slashes,
-  // so this holds on any host OS.)
+  // C:\RootX must NOT be contained in C:\Root — the boundary is a separator,
+  // not a string prefix:
   assert.ok(!core.isInsideDir('C:\\Root', 'C:\\RootX\\f.mp4', 'win32'));
   assert.ok(!core.isInsideDir('C:/Root', 'C:/RootX/f.mp4', 'win32'));
   assert.ok(core.isInsideDir('C:\\Root', 'C:\\Root\\f.mp4', 'win32'));
-});
+}));
 
-// ── Project model ────────────────────────────────────────────────────────────
+// ── Project model + enumeration ──────────────────────────────────────────────
 
-test('readProject: valid video project; preview containment; escaping file rejected', () => withTemp(async (t) => {
+test('readProject: validation, containment, type inference', () => withTemp(async (t) => {
   const dir = join(t, 'proj');
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'project.json'), JSON.stringify({
@@ -172,30 +160,22 @@ test('readProject: valid video project; preview containment; escaping file rejec
   assert.equal(p.fileAbs, resolve(dir, 'ocean.mp4'));
   assert.equal(p.previewAbs, resolve(dir, 'preview.jpg'));
 
+  // A declared file that escapes the project dir is rejected outright —
+  // a hostile project.json cannot point the server at arbitrary files.
   writeFileSync(join(dir, 'project.json'), JSON.stringify({ file: '../../secret.mp4' }));
-  assert.equal(await core.readProject(dir), null); // escapes project dir → rejected
-
+  assert.equal(await core.readProject(dir), null);
   assert.equal(await core.readProject(join(t, 'missing')), null);
-}));
 
-test('readProject: invalid declared type falls back to extension inference', () => withTemp(async (t) => {
-  const dir = join(t, 'proj');
-  mkdirSync(dir, { recursive: true });
-  // Trailing whitespace / typo in "type" is not evidence of "scene".
+  // A declared-but-unknown type (typo, trailing whitespace) is not evidence
+  // of "scene": fall back to extension inference.
   writeFileSync(join(dir, 'project.json'), JSON.stringify({ file: 'a.mp4', type: 'video ' }));
   assert.equal((await core.readProject(dir)).type, 'video');
   writeFileSync(join(dir, 'project.json'), JSON.stringify({ file: 'a.mp4', type: 'vido' }));
   assert.equal((await core.readProject(dir)).type, 'video');
-  // No extension hint → scene.
   writeFileSync(join(dir, 'project.json'), JSON.stringify({ file: 'wall.pkg', type: 'nonsense' }));
   assert.equal((await core.readProject(dir)).type, 'scene');
-}));
-
-test('inferType: extension fallback', () => {
-  assert.equal(core.inferType('a.mp4'), 'video');
   assert.equal(core.inferType('b.HTML'), 'web');
-  assert.equal(core.inferType('c.pkg'), 'scene');
-});
+}));
 
 test('enumerateWallpapers: merges roots, first id wins, sorts by title', () => withTemp(async (t) => {
   const root1 = join(t, 'r1');
@@ -215,9 +195,9 @@ test('enumerateWallpapers: merges roots, first id wins, sorts by title', () => w
   assert.equal(all.find((w) => w.id === 'a').title, 'alpha'); // first occurrence wins
 }));
 
-// ── Playlists ────────────────────────────────────────────────────────────────
+// ── Playlist model ───────────────────────────────────────────────────────────
 
-test('parsePlaylists: modern schema, dedupe, defaults', () => {
+test('parsePlaylists: both schemas, dedupe, defaults', () => {
   const playlists = core.parsePlaylists({
     profile1: {
       general: {
@@ -228,16 +208,7 @@ test('parsePlaylists: modern schema, dedupe, defaults', () => {
         ],
       },
     },
-  });
-  assert.equal(playlists.length, 2);
-  assert.deepEqual(playlists[0], { name: 'Chill', items: ['x', 'y'], order: 'random', delay: 10 });
-  assert.equal(playlists[1].order, 'sequence');
-  assert.equal(playlists[1].delay, null);
-});
-
-test('parsePlaylists: legacy selectedwallpapers schema', () => {
-  const playlists = core.parsePlaylists({
-    profile: {
+    profile2: {
       general: {
         wallpaperconfig: {
           selectedwallpapers: {
@@ -247,8 +218,11 @@ test('parsePlaylists: legacy selectedwallpapers schema', () => {
       },
     },
   });
-  assert.equal(playlists.length, 1);
-  assert.equal(playlists[0].name, 'Old');
+  assert.equal(playlists.length, 3);
+  assert.deepEqual(playlists[0], { name: 'Chill', items: ['x', 'y'], order: 'random', delay: 10 });
+  assert.equal(playlists[1].order, 'sequence');
+  assert.equal(playlists[1].delay, null);
+  assert.equal(playlists[2].name, 'Old'); // legacy selectedwallpapers schema
 });
 
 test('resolvePlaylistItem: exact path, workshop fragment, trailing folder', () => {
@@ -263,44 +237,33 @@ test('resolvePlaylistItem: exact path, workshop fragment, trailing folder', () =
   assert.equal(core.resolvePlaylistItem('C:\\nothing\\here.mp4', byPath, byId), null);
 });
 
-// ── HTTP helpers ─────────────────────────────────────────────────────────────
+// ── HTTP semantics: Range (RFC 9110 §14.2) ───────────────────────────────────
 
-test('parseRangeHeader: full, open-ended, suffix, clamped', () => {
+test('parseRangeHeader: satisfiable → 206; valid-but-unsatisfiable → 416; unsupported → ignored', () => {
+  // Satisfiable (206 with these inclusive bounds):
   assert.equal(core.parseRangeHeader(undefined, 100), null);
   assert.deepEqual(core.parseRangeHeader('bytes=0-9', 100), { start: 0, end: 9 });
   assert.deepEqual(core.parseRangeHeader('bytes=90-', 100), { start: 90, end: 99 });
   assert.deepEqual(core.parseRangeHeader('bytes=-10', 100), { start: 90, end: 99 });
   assert.deepEqual(core.parseRangeHeader('bytes=0-999', 100), { start: 0, end: 99 }); // clamped
   assert.deepEqual(core.parseRangeHeader(' bytes=0-9 ', 100), { start: 0, end: 9 }); // padded
-  assert.deepEqual(core.parseRangeHeader('bytes=-200', 100), { start: 0, end: 99 }); // suffix > size → whole
-});
-
-test('parseRangeHeader: unsatisfiable-but-valid → 416', () => {
+  assert.deepEqual(core.parseRangeHeader('bytes=-200', 100), { start: 0, end: 99 }); // suffix > size
+  // Valid syntax but unsatisfiable for this resource → 416:
   assert.deepEqual(core.parseRangeHeader('bytes=200-300', 100), { error: true }); // beyond EOF
   assert.deepEqual(core.parseRangeHeader('bytes=50-40', 100), { error: true }); // inverted
   assert.deepEqual(core.parseRangeHeader('bytes=5-5', 5), { error: true }); // starts at EOF
-  assert.deepEqual(core.parseRangeHeader('bytes=1-', 1), { error: true }); // past the single byte
+  assert.deepEqual(core.parseRangeHeader('bytes=1-', 1), { error: true });
   assert.deepEqual(core.parseRangeHeader('bytes=0-0', 0), { error: true }); // empty file
-});
-
-test('parseRangeHeader: invalid/unsupported → IGNORED (200), per RFC 9110 §14.2', () => {
+  // Not understood → MUST be ignored (200 full body):
   assert.equal(core.parseRangeHeader('bytes=0-1,5-6', 100), null); // multi-range
-  assert.equal(core.parseRangeHeader('bytes=abc', 100), null); // garbage
-  assert.equal(core.parseRangeHeader('bytes=', 100), null); // empty
-  assert.equal(core.parseRangeHeader('bytes=-', 100), null); // no digits
+  assert.equal(core.parseRangeHeader('bytes=abc', 100), null);
+  assert.equal(core.parseRangeHeader('bytes=', 100), null);
+  assert.equal(core.parseRangeHeader('bytes=-', 100), null);
   assert.equal(core.parseRangeHeader('bytes=-0', 100), null); // zero-length suffix
   assert.equal(core.parseRangeHeader('items=0-1', 100), null); // wrong unit
 });
 
-test('mimeFor: media, web assets, fallback', () => {
-  assert.equal(core.mimeFor('a.MP4'), 'video/mp4');
-  assert.equal(core.mimeFor('b.html'), 'text/html; charset=utf-8');
-  assert.equal(core.mimeFor('c.png'), 'image/png');
-  assert.equal(core.mimeFor('d.bin'), 'application/octet-stream');
-  assert.equal(core.mimeFor('noext'), 'application/octet-stream');
-});
-
-// ── Inventory assembly (pure; what the host serves over HTTP) ────────────────
+// ── Inventory assembly (the payload contract the client consumes) ────────────
 
 async function fixtureInventory(t) {
   const installDir = join(t, 'we');
@@ -340,12 +303,12 @@ test('buildInventoryFrom: assembles wallpapers + playlists from a fixture tree',
   assert.equal(w1.id, 'p1'); assert.equal(w1.type, 'video'); assert.equal(w1.playable, true);
   assert.ok(w1.media.endsWith('/media/tok-1'));
   assert.equal(w2.id, 'p3'); assert.equal(w2.type, 'web'); assert.equal(w2.playable, true);
-  // The web URL is addressed AT the entry file: the document URL mirrors the
-  // project directory so the wallpaper's relative references resolve — a bare
-  // token URL strands `app.js` one directory too high (404, blank wallpaper).
+  // Web entries are addressed AT their entry file — the document URL mirrors
+  // the project directory (the client's iframe relies on this for relative
+  // references to resolve):
   assert.equal(w2.media, '/we-background/media/tok-2/index.html');
 
-  // mint entries carry containment info the host needs for sub-assets,
+  // Mint entries carry containment info the host needs for sub-assets,
   // plus a stable per-asset key for token reuse across rebuilds.
   assert.equal(mints[0].abs, join(p1Dir, 'a.mp4'));
   assert.equal(mints[0].rootDir, null); // video: no sub-assets
@@ -360,7 +323,7 @@ test('buildInventoryFrom: assembles wallpapers + playlists from a fixture tree',
   assert.equal(inv.playlists[0].unresolvedCount, 1);
 }));
 
-test('buildInventoryFrom: scene/application entries are excluded and never minted', () => withTemp(async (t) => {
+test('buildInventoryFrom: only browser-renderable kinds surface, never minted', () => withTemp(async (t) => {
   const { installDir, lib } = await fixtureInventory(t);
   const p4Dir = join(lib, 'steamapps', 'workshop', 'content', '431960', 'p4');
   mkdirSync(p4Dir, { recursive: true });
@@ -382,23 +345,51 @@ test('buildInventoryFrom: scene/application entries are excluded and never minte
   assert.equal(inv.portableCount, 2);
   assert.ok(!inv.wallpapers.some((w) => w.id === 'p4'));
   assert.equal(mints.length, 2); // exactly p1:media and p3:media
+
+  // The same holds for the "application" kind, and previews still ship for
+  // playable entries (they are the decode-failure fallback):
+  const ws = join(t, 'steamapps', 'workshop', 'content', '431960');
+  for (const [id, type] of [['v1', 'video'], ['w1', 'web'], ['s1', 'scene'], ['a1', 'application']]) {
+    const dir = join(ws, id);
+    mkdirSync(dir, { recursive: true });
+    const project = { title: 'W' + id, type, file: type === 'video' ? 'v.mp4' : 'index.html', preview: 'p.jpg' };
+    writeFileSync(join(dir, 'project.json'), JSON.stringify(project));
+    if (type === 'video') writeFileSync(join(dir, 'v.mp4'), 'x');
+    else writeFileSync(join(dir, 'index.html'), '<html></html>');
+    writeFileSync(join(dir, 'p.jpg'), 'jpg');
+  }
+  const inv2 = await core.buildInventoryFrom({ installDir: null, libraryRoots: [t] }, { mint: () => 't' });
+  assert.deepEqual(inv2.wallpapers.map((w) => w.type).sort(), ['video', 'web']);
+  assert.equal(inv2.total, 2);
+  assert.ok(inv2.wallpapers.every((w) => w.preview && w.preview.startsWith('/we-background/preview/')));
 }));
 
-test('toUrlPath: separators, spaces and unicode become URL-safe segments', () => {
-  assert.equal(core.toUrlPath('bin\\index.html'), 'bin/index.html');
-  assert.equal(core.toUrlPath('我的 画.html'), encodeURIComponent('我的 画.html'));
-  assert.equal(core.toUrlPath('a//b'), 'a/b'); // empty segments never double-slash
-});
+test('buildInventoryFrom: degenerate inputs — falsy mint, missing install', () => withTemp(async (t) => {
+  const { installDir, lib } = await fixtureInventory(t);
+  // No mint provided — the default returns null; URLs are null, never "…/null".
+  const inv = await core.buildInventoryFrom({ installDir, libraryRoots: [lib] });
+  for (const w of inv.wallpapers) {
+    assert.equal(w.media, null);
+    assert.equal(w.preview, null);
+    assert.equal(w.playable, false);
+  }
+  assert.equal(inv.total, 2); // enumeration still works
+
+  const empty = await core.buildInventoryFrom({ installDir: null, libraryRoots: [] }, { mint: () => 'x' });
+  assert.equal(empty.installDir, null);
+  assert.deepEqual(empty.wallpapers, []);
+  assert.deepEqual(empty.playlists, []);
+  assert.equal(empty.total, 0);
+  assert.equal(empty.portableCount, 0);
+}));
 
 test('buildInventoryFrom: nested/unicode web entries keep their directory shape', () => withTemp(async (t) => {
-  const installDir = join(t, 'we');
-  const lib = join(t, 'lib');
+  const { installDir, lib } = await fixtureInventory(t);
   const dir = join(lib, 'steamapps', 'workshop', 'content', '431960', 'p5');
-  mkdirSync(dir, { recursive: true });
+  mkdirSync(join(dir, 'bin'), { recursive: true });
   writeFileSync(join(dir, 'project.json'), JSON.stringify({
     title: 'Nested', type: 'web', file: 'bin/start page.html',
   }));
-  mkdirSync(join(dir, 'bin'), { recursive: true });
   writeFileSync(join(dir, 'bin', 'start page.html'), '<html></html>');
   const inv = await core.buildInventoryFrom(
     { installDir, libraryRoots: [lib] },
@@ -410,50 +401,3 @@ test('buildInventoryFrom: nested/unicode web entries keep their directory shape'
   assert.equal(w.media,
     '/we-background/media/tok-web/bin/' + encodeURIComponent('start page.html'));
 }));
-
-test('buildInventoryFrom: a falsy mint never produces "…/null" URLs', () => withTemp(async (t) => {
-  const { installDir, lib } = await fixtureInventory(t);
-  // No mint provided at all — the default returns null.
-  const inv = await core.buildInventoryFrom({ installDir, libraryRoots: [lib] });
-  for (const w of inv.wallpapers) {
-    assert.equal(w.media, null);
-    assert.equal(w.preview, null);
-    assert.equal(w.playable, false);
-  }
-  assert.equal(inv.total, 2); // enumeration still works
-}));
-
-test('buildInventoryFrom: missing install yields empty structure, not an error', async () => {
-  const inv = await core.buildInventoryFrom({ installDir: null, libraryRoots: [] }, { mint: () => 'x' });
-  assert.equal(inv.installDir, null);
-  assert.deepEqual(inv.wallpapers, []);
-  assert.deepEqual(inv.playlists, []);
-  assert.equal(inv.total, 0);
-  assert.equal(inv.portableCount, 0);
-});
-
-test('buildInventoryFrom: scene/application entries are filtered out entirely', async () => {
-  await withTemp(async (tmp) => {
-    const ws = join(tmp, 'steamapps', 'workshop', 'content', '431960');
-    const mk = async (id, type) => {
-      const dir = join(ws, id);
-      mkdirSync(dir, { recursive: true });
-      const project = { title: 'W' + id, type, file: type === 'video' ? 'v.mp4' : 'index.html', preview: 'p.jpg' };
-      writeFileSync(join(dir, 'project.json'), JSON.stringify(project));
-      if (type === 'video') writeFileSync(join(dir, 'v.mp4'), 'x');
-      else writeFileSync(join(dir, 'index.html'), '<html></html>');
-      writeFileSync(join(dir, 'p.jpg'), 'jpg');
-    };
-    await mk('v1', 'video');
-    await mk('w1', 'web');
-    await mk('s1', 'scene');
-    await mk('a1', 'application');
-    const inv = await core.buildInventoryFrom({ installDir: null, libraryRoots: [tmp] }, { mint: () => 't' });
-    const types = inv.wallpapers.map((w) => w.type).sort();
-    assert.deepEqual(types, ['video', 'web']); // no scene, no application
-    assert.equal(inv.total, 2);
-    assert.equal(inv.portableCount, 2);
-    // Previews still ship for playable entries (decode-failure fallback).
-    assert.ok(inv.wallpapers.every((w) => w.preview && w.preview.startsWith('/we-background/preview/')));
-  });
-});

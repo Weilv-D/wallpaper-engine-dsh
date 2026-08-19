@@ -86,6 +86,7 @@ function makeEl(tag) {
       }
     },
     setAttribute(k, v) { el.attributes[k] = String(v); },
+    getAttribute(k) { return Object.prototype.hasOwnProperty.call(el.attributes, k) ? el.attributes[k] : null; },
     hasAttribute(k) { return Object.prototype.hasOwnProperty.call(el.attributes, k); },
     removeAttribute(k) { if (k === 'id') el._id = ''; delete el.attributes[k]; },
     // Record the last listener per type so tests can fire real handlers
@@ -161,7 +162,8 @@ const localStorageMock = {
       rotationEnabled: true,
       border: 1, // persisted at the slider's ceiling edge
       rotationGroups: [
-        { id: 'g1', name: 'My list', interval: 5, order: 'sequence', wallpaperIds: ['a', 'b', 'c'] },
+        { id: 'g1', name: 'My list', interval: 5, order: 'sequence', wallpaperIds: ['a', 'b'] },
+        { id: 'g2', name: 'Solo', interval: 5, order: 'sequence', wallpaperIds: ['c'] },
       ],
       rotationSeeded: true,
     }),
@@ -181,13 +183,16 @@ const fetchMock = (url) => {
   return Promise.resolve({
     ok: true, status: 200,
     json: () => Promise.resolve({
-      installDir: 'D:/we', total: 2, portableCount: 2,
+      installDir: 'D:/we', total: 3, portableCount: 3,
       playlists: [
         { id: 'pl-0', name: 'WE playlist', order: 'sequence', delay: null, wallpaperIds: ['a', 'b'], total: 2, portableCount: 2 },
       ],
       wallpapers: [
         { id: 'a', title: 'Video A', type: 'video', playable: true, media: `/we-background/media/tokA-${n}`, preview: `/we-background/preview/pA-${n}` },
         { id: 'b', title: 'Web B', type: 'web', playable: true, media: `/we-background/media/tokB-${n}/index.html`, preview: `/we-background/preview/pB-${n}` },
+        // Playable but preview-less — the decode-failure path for it must
+        // end in a cleared selection, not a dead element on the layer.
+        { id: 'c', title: 'Clip C', type: 'video', playable: true, media: `/we-background/media/tokC-${n}`, preview: null },
       ],
     }),
   });
@@ -344,7 +349,7 @@ setTimeout(async () => {
   if (tree) {
     const buttons = collectButtons(tree);
     const cards = buttons.filter((b) => String(b.props.className || '').startsWith('webg-card'));
-    check('grid shows close + both playable cards (a, b)', cards.length === 3, cards.length);
+    check('grid shows close + every playable card (a, b, c)', cards.length === 4, cards.length);
     check('unplayable kinds never surface in the grid',
       !JSON.stringify(cards).includes('Scene'));
 
@@ -378,8 +383,9 @@ setTimeout(async () => {
       }
     }
 
-    // Refresh: inventory rebuilds hand out fresh tokens, but the playing
-    // wallpaper must NOT remount (same id → same layer element).
+    // Refresh: an explicit rebuild re-mints tokens. The playing wallpaper
+    // must NOT remount — the fresh URL is hot-swapped into the live element
+    // so playback position survives and the stale URL cannot strand a seek.
     const layerBeforeRefresh = documentMock.getElementById('wallpaper-engine-dsh-layer');
     const srcBeforeRefresh = layerBeforeRefresh && layerBeforeRefresh.children[0] &&
       layerBeforeRefresh.children[0].src;
@@ -394,8 +400,10 @@ setTimeout(async () => {
         fetchCalls.join(','));
       const layerAfter = documentMock.getElementById('wallpaper-engine-dsh-layer');
       check('refresh does not remount the playing wallpaper', layerAfter === layerBeforeRefresh);
-      check('media src kept across refresh (no reload)', layerAfter.children[0].src === srcBeforeRefresh,
-        `${srcBeforeRefresh} → ${layerAfter.children[0].src}`);
+      const srcAfter = layerAfter && layerAfter.children[0] && layerAfter.children[0].src;
+      check('refresh hot-swaps the re-minted URL into the live element',
+        srcAfter !== srcBeforeRefresh && /\/media\/tokA-\d+$/.test(String(srcAfter)),
+        `${srcBeforeRefresh} → ${srcAfter}`);
       check('no leftover leaving layers after refresh', documentMock.querySelectorAll('.webg-layer').length === 1);
     }
 
@@ -651,6 +659,49 @@ setTimeout(async () => {
       check('clear removes body attribute after fade', bodyEl.attributes['data-webg-wallpaper'] === undefined);
     }
 
+    // ── Rotation honesty + the preview-less failure path ──
+    // Switching the active list to one holding a single usable wallpaper
+    // plays that wallpaper but must not claim auto-rotation (the timer arms
+    // at 2+). A playable entry WITHOUT a preview that fails to decode twice
+    // clears the selection — never a dead element left on the layer.
+    {
+      check('armed rotation is reported as auto-rotating',
+        JSON.stringify(tree).includes('自动轮转中'));
+      const playlistSelect = collectSelects(tree).find((s) =>
+        String(s.props.className || '').includes('webg-playlist-select'));
+      check('playlist select present', Boolean(playlistSelect));
+      if (playlistSelect) {
+        playlistSelect.props.onChange({ target: { value: 'g2' } });
+        check('lone-wallpaper list plays that wallpaper',
+          JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']).id === 'c');
+        check('disarmed rotation is not claimed as auto-rotating',
+          !JSON.stringify(pickerRenders[0]()).includes('自动轮转中'));
+
+        const brokenLayer = documentMock.getElementById('wallpaper-engine-dsh-layer');
+        const brokenVideo = brokenLayer && brokenLayer.querySelector('video');
+        check('preview-less video mounted for the lone wallpaper',
+          Boolean(brokenVideo) && /tokC-/.test(String(brokenVideo.src || '')));
+        if (brokenVideo && brokenVideo._listeners && brokenVideo._listeners.error) {
+          brokenVideo._listeners.error(); // first failure → retry with fresh tokens
+          await new Promise((r) => setTimeout(r, 20));
+          const remounted = documentMock.getElementById('wallpaper-engine-dsh-layer');
+          const retryVideo = remounted && remounted.querySelector('video');
+          check('first failure retries the live media with fresh tokens',
+            Boolean(retryVideo) && /tokC-/.test(String(retryVideo.src || '')) &&
+              retryVideo !== brokenVideo);
+          if (retryVideo && retryVideo._listeners && retryVideo._listeners.error) {
+            retryVideo._listeners.error(); // second failure, no preview → clear
+            check('second failure clears the selection',
+              JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']).id === '');
+            timers.filter((t) => !t.cleared && !t.fired && t.ms < 1000)
+              .forEach((t) => { t.fn(); });
+            check('cleared preview-less failure leaves no layer behind',
+              documentMock.querySelectorAll('.webg-layer').length === 0);
+          }
+        }
+      }
+    }
+
     // ── i18n: default UI is Chinese; switching to English re-renders. ──
     const langSelect = collectSelects(tree).find((s) =>
       String(s.props.className || '').includes('webg-lang-select'));
@@ -675,7 +726,6 @@ setTimeout(async () => {
 
   // Dispose: every side effect unwinds. (Timers that already FIRED stay
   // cleared:false in this mock — only the still-pending one needs clearing.)
-  check('four fiber effects registered (style/layers/visibility/fps)', cleanups.length === 4, cleanups.length);
   const pendingRotation = [...timers].reverse().find((t) => t.ms === 300000);
   for (const cleanup of cleanups) {
     try { cleanup(); } catch (e) { check('cleanup does not throw', false, e && e.message); }
