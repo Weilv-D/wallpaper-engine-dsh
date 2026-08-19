@@ -276,6 +276,11 @@ check('style tag injected on apply', headEl.children.some((n) => n.tagName === '
   check('on-brand contrast comes from the inverted label ramp, not brand-primary-invert',
     styleCss.includes('--webg-on-brand: var(--dsw-alias-label-primary-inverted') &&
       !styleCss.includes('var(--dsw-alias-brand-primary-invert'));
+  // The shell's color-scheme: dark propagates into sandboxed web wallpapers
+  // and breaks some of them (solid white page) — the iframe must pin the
+  // neutral scheme itself.
+  check('web wallpaper iframe pins color-scheme: normal against theme leakage',
+    styleCss.includes('color-scheme: normal'));
 }
 check('initial fetch hits inventory', fetchCalls.includes('/we-background/inventory'), fetchCalls.join(','));
 
@@ -817,6 +822,39 @@ setTimeout(async () => {
             check('cleared preview-less failure leaves no layer behind',
               documentMock.querySelectorAll('.webg-layer').length === 0);
           }
+        }
+      }
+    }
+
+    // ── Smart veil sight for web wallpapers ──
+    // The sandboxed iframe's pixels are unreadable, so the wallpaper's
+    // PREVIEW still is decoded through a hidden probe and drives the veil
+    // floor: a near-black preview raises the light-theme white veil (and a
+    // bright one the dark-theme black veil).
+    {
+      const webAgain = cardByTitle(collectButtons(pickerRenders[0]()), 'Web B');
+      check('preview probe target re-renders in the grid', Boolean(webAgain));
+      if (webAgain) {
+        webAgain.props.onClick();
+        const probe = documentMock.getElementById('wallpaper-engine-dsh-preview-probe');
+        check('hidden preview probe mounted for the web wallpaper',
+          Boolean(probe) && /\/preview\//.test(String(probe.src || '')),
+          String(probe && probe.src));
+        if (probe && probe._listeners && probe._listeners.load) {
+          bodyEl.removeAttribute('data-ds-dark-theme');
+          mockCanvasPixels = new Uint8Array(16 * 16 * 4); // black preview
+          probe._listeners.load();
+          check('black preview raises the light-theme veil to 0.5',
+            bodyEl.style._props['--webg-scrim-color'] === 'rgba(255,255,255,0.5)',
+            bodyEl.style._props['--webg-scrim-color']);
+          bodyEl.setAttribute('data-ds-dark-theme', '');
+          mockCanvasPixels = new Uint8Array(16 * 16 * 4).fill(255); // bright preview
+          probe._listeners.load();
+          check('bright preview raises the dark-theme veil to 0.5',
+            bodyEl.style._props['--webg-scrim-color'] === 'rgba(0,0,0,0.5)',
+            bodyEl.style._props['--webg-scrim-color']);
+          bodyEl.removeAttribute('data-ds-dark-theme');
+          mockCanvasPixels = null;
         }
       }
     }
