@@ -24,9 +24,10 @@
  *   7. Bilingual UI (中文/English): follows the DSH shell's Language setting
  *      (locale service + locale/change event), with a manual override that
  *      persists; falls back to the browser language.
- *   8. Canvas fit + manual crop (排布): object-fit base mode, plus a
- *      drag-to-pan / wheel-to-zoom adjust overlay (translate/scale
- *      transform) persisted per session.
+ *   8. Canvas fit + manual crop (排布): object-fit base mode — plus Free,
+ *      which drops the gap-free invariant: natural size on a black canvas,
+ *      0.1–4× zoom, keep-visible pan — via a drag-to-pan / wheel-to-zoom
+ *      adjust overlay (translate/scale transform) persisted per session.
  *   9. Legibility on any wallpaper: a theme-opposing veil (black in dark
  *      theme, white in light) with a luminance-adaptive "smart veil" floor.
  */
@@ -117,6 +118,7 @@ const STRINGS = {
     fitContain: "适应",
     fitFill: "拉伸",
     fitNone: "原始",
+    fitFree: "自由",
     adjust: "调整画面",
     adjustDone: "完成",
     adjustHint: "拖动平移 · 滚轮缩放 · Esc 或点「完成」退出",
@@ -194,6 +196,7 @@ const STRINGS = {
     fitContain: "Contain",
     fitFill: "Stretch",
     fitNone: "Original",
+    fitFree: "Free",
     adjust: "Adjust",
     adjustDone: "Done",
     adjustHint: "Drag to pan · wheel to zoom · Esc or Done to exit",
@@ -252,7 +255,7 @@ const DEFAULTS = {
   offsetY: 0,
 };
 
-const FIT_MODES = ["cover", "contain", "fill", "none"];
+const FIT_MODES = ["cover", "contain", "fill", "none", "free"];
 
 // ── Persisted selection ─────────────────────────────────────────────────────
 function clampNum(v, lo, hi, fallback) {
@@ -299,11 +302,12 @@ function readPersisted() {
       autoScrim: o.autoScrim !== false,
       lang: o.lang === "zh" || o.lang === "en" ? o.lang : "auto",
       fit: FIT_MODES.indexOf(o.fit) >= 0 ? o.fit : DEFAULTS.fit,
-      // Older builds could persist zoom < 1 / unclamped pans — clampCrop()
-      // at store creation re-seats both into the gap-free envelope.
-      zoom: clampNum(o.zoom, 0.25, 4, DEFAULTS.zoom),
-      offsetX: clampNum(o.offsetX, -200, 200, DEFAULTS.offsetX),
-      offsetY: clampNum(o.offsetY, -200, 200, DEFAULTS.offsetY),
+      // Older builds could persist unclamped crops — clampCrop() at store
+      // creation re-seats both into the envelope the CURRENT fit mode
+      // allows (free: zoom ≥ 0.1 with keep-visible pans; others: gap-free).
+      zoom: clampNum(o.zoom, 0.1, 4, DEFAULTS.zoom),
+      offsetX: clampNum(o.offsetX, -300, 300, DEFAULTS.offsetX),
+      offsetY: clampNum(o.offsetY, -300, 300, DEFAULTS.offsetY),
     };
   } catch {
     return { id: "", ...DEFAULTS };
@@ -328,8 +332,8 @@ const selection = {
   inventory: { installDir: null, wallpapers: [], total: 0, portableCount: 0, playlists: [], error: null },
   loaded: false,
 };
-// Older builds allowed zoom < 1 and unclamped pans — re-seat any persisted
-// crop into the gap-free envelope before the first render.
+// Re-seat any persisted crop into the envelope the persisted fit mode
+// allows before the first render.
 clampCrop();
 
 const listeners = new Set();
@@ -755,15 +759,31 @@ function attachMediaError(media, sel) {
 // never receive pointer events. Adjust mode moves the LIVE layer node into a
 // topmost transparent overlay — the user edits the real thing, WYSIWYG.
 //
-// Crop geometry invariants: the media box covers the viewport exactly at
-// zoom 1; zooming creates headroom, panning spends it. Zoom floors at 1
-// and pan is clamped to ±(zoom-1)/2·100 %, so a gap-free fullscreen image
-// is guaranteed at every setting.
+// Crop geometry is chosen by the fit mode. The four object-fit modes keep a
+// GAP-FREE invariant: the media box covers the viewport exactly at zoom 1,
+// zoom floors at 1, and pan is clamped to ±(zoom−1)/2·100 % — the image
+// always fills the screen. The "free" mode drops that invariant on purpose:
+// the media sits at natural size on a black canvas, zoom runs 0.1–4×, and
+// pan is only clamped to keep a sliver (≥10 % of the box) on screen so the
+// wallpaper can never be dragged entirely out of sight.
 function clampCrop() {
-  selection.zoom = Math.round(Math.min(4, Math.max(1, selection.zoom)) * 100) / 100;
+  selection.zoom = Math.round(Math.min(4, Math.max(isFreeFit() ? 0.1 : 1, selection.zoom)) * 100) / 100;
+  if (isFreeFit()) {
+    // Content spans ±zoom·50 % of the box around its centre; the pan offset
+    // shifts it by its own % of the box. |offset| ≤ (zoom+1)·50 − 10 keeps
+    // at least 10 % of the media edge-to-edge visible in both axes.
+    const reach = (selection.zoom + 1) * 50 - 10;
+    selection.offsetX = Math.min(reach, Math.max(-reach, selection.offsetX));
+    selection.offsetY = Math.min(reach, Math.max(-reach, selection.offsetY));
+    return;
+  }
   const pan = (selection.zoom - 1) * 50;
   selection.offsetX = Math.min(pan, Math.max(-pan, selection.offsetX));
   selection.offsetY = Math.min(pan, Math.max(-pan, selection.offsetY));
+}
+
+function isFreeFit() {
+  return selection.fit === "free";
 }
 
 let adjustOverlay = null;
@@ -823,7 +843,7 @@ function enterAdjust() {
     const h = overlay.clientHeight || 1;
     selection.offsetX += ((e.clientX - drag.x) / w) * 100;
     selection.offsetY += ((e.clientY - drag.y) / h) * 100;
-    clampCrop(); // gap-free guarantee: pan never outruns the zoom headroom
+    clampCrop(); // mode envelope: gap-free pan headroom, or free keep-visible
     drag = { x: e.clientX, y: e.clientY };
     applyEffects();
   };
@@ -841,10 +861,10 @@ function enterAdjust() {
   };
   const onWheel = (e) => {
     if (typeof e.preventDefault === "function") e.preventDefault();
-    // Crop semantics: zoom IN only (1–4×). Zooming below cover would float a
-    // shrunken box in empty space — that is not a crop. Tightening zoom also
-    // re-clamps the pan into the new headroom, so zooming back to 1 pulls
-    // the framing home instead of leaving edge gaps.
+    // clampCrop enforces the mode's zoom floor: the gap-free modes never
+    // zoom below 1 (a shrunken box floating in empty space is not a crop)
+    // and tightening zoom re-clamps the pan so zooming back to 1 pulls the
+    // framing home; free mode shrinks down to 0.1× on its black canvas.
     selection.zoom *= Math.exp(-(e.deltaY || 0) * 0.0012);
     clampCrop();
     applyEffects();
@@ -1070,8 +1090,11 @@ function applyEffects() {
     selection.wallpaperBlur > 0 ? (0.02 + selection.wallpaperBlur * 0.0004).toFixed(4) : "0");
   // Canvas fit: object-fit base mode plus the user's manual crop — pan
   // offsets (percent of the media box) and zoom, applied as a transform so
-  // no remount is ever needed while dragging.
-  s.setProperty("--webg-fit", selection.fit);
+  // no remount is ever needed while dragging. "free" draws at natural size
+  // (object-fit: none) and paints the layer black, so exposed edges read as
+  // a canvas instead of whatever sits behind the app frame.
+  s.setProperty("--webg-fit", selection.fit === "free" ? "none" : selection.fit);
+  s.setProperty("--webg-layer-bg", selection.fit === "free" ? "#000" : "transparent");
   s.setProperty("--webg-zoom", String(selection.zoom));
   s.setProperty("--webg-offset-x", selection.offsetX + "%");
   s.setProperty("--webg-offset-y", selection.offsetY + "%");
@@ -1097,6 +1120,7 @@ function clearEffects() {
   s.removeProperty("--webg-noise-display");
   s.removeProperty("--webg-noise-opacity");
   s.removeProperty("--webg-fit");
+  s.removeProperty("--webg-layer-bg");
   s.removeProperty("--webg-zoom");
   s.removeProperty("--webg-offset-x");
   s.removeProperty("--webg-offset-y");
@@ -1294,6 +1318,10 @@ function onWallpaperBlur(px) { selection.wallpaperBlur = px; persistSelection();
 
 function onFit(e) {
   selection.fit = FIT_MODES.indexOf(e.target.value) >= 0 ? e.target.value : "cover";
+  // Re-seat the crop into the new mode's envelope: leaving free for a
+  // gap-free mode pulls zoom back up to 1 and reins the pan in; the other
+  // direction only ever relaxes bounds, so the framing carries over.
+  clampCrop();
   persistSelection();
   applyEffects();
   emit();
@@ -1522,19 +1550,20 @@ function RotationControlsRow(t, sel, group, usableCount) {
 
 function EffectsPanel(t, sel) {
   return React.createElement(React.Fragment, null,
-    // object-fit only means something for video/still wallpapers — an
-    // iframe ignores it and always fills its layer — so the base-mode
-    // select is hidden for web. The manual crop (drag / wheel in the
-    // adjust overlay) is a plain CSS transform and applies to EVERY kind,
-    // so 调整画面 / 重置裁剪 stay available even for iframes.
+    // The fit select covers all wallpaper types: for video/stills it picks
+    // the object-fit base mode, and "free" additionally unlocks shrink +
+    // off-edge dragging for every kind — an iframe ignores object-fit, but
+    // the zoom/pan transform applies to it the same way. The manual crop
+    // (drag / wheel in the adjust overlay) is a plain CSS transform and
+    // applies to EVERY kind, so 调整画面 / 重置裁剪 are always available.
     React.createElement("div", { className: "webg-row webg-fit-row" },
-      sel.type !== "web" && React.createElement("span", { className: "webg-hint webg-label" }, t.fit),
-      sel.type !== "web" && React.createElement("select", {
+      React.createElement("span", { className: "webg-hint webg-label" }, t.fit),
+      React.createElement("select", {
         className: "webg-select webg-fit-select",
         value: sel.fit,
         onChange: onFit,
       },
-      ...[t.fitCover, t.fitContain, t.fitFill, t.fitNone].map((label, i) =>
+      ...[t.fitCover, t.fitContain, t.fitFill, t.fitNone, t.fitFree].map((label, i) =>
         React.createElement("option", { key: FIT_MODES[i], value: FIT_MODES[i] }, label),
       )),
       React.createElement("button", {
@@ -1649,10 +1678,13 @@ function WallpaperPicker() {
 // Everything reads DSH design tokens (--dsw-*) so the UI blends into the
 // shell and follows light/dark theme switches automatically.
 const CSS = `
-  /* Wallpaper layers: fixed, sunk below the app frame, crossfading. */
+  /* Wallpaper layers: fixed, sunk below the app frame, crossfading. The
+     background paints black only in the "free" fit mode, where the media
+     can be dragged off the edges and the exposed area reads as a canvas. */
   .webg-layer {
     position: fixed; inset: 0; z-index: -2; overflow: hidden;
     pointer-events: none; opacity: 1;
+    background: var(--webg-layer-bg, transparent);
     transition: opacity ${CROSSFADE_MS}ms ease;
   }
   .webg-layer--enter { opacity: 0; }

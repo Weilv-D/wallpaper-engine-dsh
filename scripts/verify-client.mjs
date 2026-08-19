@@ -371,9 +371,19 @@ setTimeout(async () => {
         const webButtons = collectButtons(webTree);
         check('web wallpaper keeps the crop-adjust button',
           webButtons.some((b) => Array.isArray(b.children) && b.children.includes('调整画面')));
-        check('web wallpaper hides the object-fit select (iframe ignores it)',
-          !collectSelects(webTree).some((s) =>
-            String(s.props.className || '').includes('webg-fit-select')));
+        // The fit select shows for web too: object-fit is meaningless for an
+        // iframe, but "free" unlocks drag/zoom transforms on it.
+        const webFit = collectSelects(webTree).find((s) =>
+          String(s.props.className || '').includes('webg-fit-select'));
+        check('web wallpaper shows the fit select (free transforms the iframe)',
+          Boolean(webFit));
+        if (webFit) {
+          webFit.props.onChange({ target: { value: 'free' } });
+          check('free fit applies to the web wallpaper (canvas + natural size)',
+            bodyEl.style._props['--webg-fit'] === 'none' &&
+              bodyEl.style._props['--webg-layer-bg'] === '#000');
+          webFit.props.onChange({ target: { value: 'cover' } });
+        }
         const backToVideo = cardByTitle(webButtons, 'Video A');
         if (backToVideo) {
           backToVideo.props.onClick();
@@ -507,6 +517,46 @@ setTimeout(async () => {
             !documentMock.body.children.some((c) => c._classes && c._classes.has('webg-adjust')) &&
               documentMock.getElementById('wallpaper-engine-dsh-layer') === layerBefore);
         }
+      }
+    }
+
+    // ── Free fit: natural size on a black canvas — shrink below 1 is
+    // allowed, an extreme drag keeps a sliver on screen, and leaving free
+    // re-seats the crop into the gap-free envelope.
+    {
+      const freeSelect = collectSelects(tree).find((s) =>
+        String(s.props.className || '').includes('webg-fit-select'));
+      if (freeSelect) {
+        freeSelect.props.onChange({ target: { value: 'free' } });
+        check('free fit draws at natural size on a black canvas',
+          bodyEl.style._props['--webg-fit'] === 'none' &&
+            bodyEl.style._props['--webg-layer-bg'] === '#000',
+          JSON.stringify([bodyEl.style._props['--webg-fit'], bodyEl.style._props['--webg-layer-bg']]));
+        adjustBtn.props.onClick();
+        const overlay = documentMock.body.children.find((c) => c._classes && c._classes.has('webg-adjust'));
+        const handlers = overlay && overlay._listeners;
+        if (handlers && handlers.wheel && handlers.pointerdown) {
+          handlers.wheel({ deltaY: 1000000, preventDefault() {} });
+          const shrunk = JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']);
+          check('free fit shrinks below 1 down to the 0.1 floor',
+            shrunk.zoom === 0.1, String(shrunk.zoom));
+          handlers.pointerdown({ clientX: 500, clientY: 300, target: overlay });
+          handlers.pointermove({ clientX: -5000, clientY: 300 });
+          handlers.pointerup({});
+          const dragged = JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']);
+          const reach = (dragged.zoom + 1) * 50 - 10;
+          check('free drag is clamped to keep a sliver on screen',
+            Math.abs(dragged.offsetX) <= reach + 1e-9 && dragged.offsetX < -40,
+            JSON.stringify([dragged.zoom, dragged.offsetX, reach]));
+        }
+        if (documentMock._listeners.keydown) documentMock._listeners.keydown({ key: 'Escape' });
+        freeSelect.props.onChange({ target: { value: 'cover' } });
+        const reseated = JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']);
+        check('switching back to a gap-free fit re-seats the crop (zoom ≥ 1, pan in headroom)',
+          reseated.zoom >= 1 && Math.abs(reseated.offsetX) <= (reseated.zoom - 1) * 50 + 1e-9,
+          JSON.stringify([reseated.zoom, reseated.offsetX]));
+        check('layer background returns to transparent outside free fit',
+          bodyEl.style._props['--webg-layer-bg'] === 'transparent');
       }
     }
 
