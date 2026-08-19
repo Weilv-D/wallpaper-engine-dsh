@@ -268,6 +268,15 @@ check('registers settings.general.item row',
   registrations.some((r) => r.key === 'settings.general.item' && r.id === 'we-background'),
   JSON.stringify(registrations));
 check('style tag injected on apply', headEl.children.some((n) => n.tagName === 'STYLE'));
+// The shell's brand-primary-invert aliases brand-primary itself (no
+// contrast) — anything on a brand fill must take its colour from the
+// inverted label ramp instead, or buttons render as blank patches.
+{
+  const styleCss = (headEl.children.find((n) => n.tagName === 'STYLE') || {}).textContent || '';
+  check('on-brand contrast comes from the inverted label ramp, not brand-primary-invert',
+    styleCss.includes('--webg-on-brand: var(--dsw-alias-label-primary-inverted') &&
+      !styleCss.includes('var(--dsw-alias-brand-primary-invert'));
+}
 check('initial fetch hits inventory', fetchCalls.includes('/we-background/inventory'), fetchCalls.join(','));
 
 // Walk a rendered picker tree for button / select descriptors.
@@ -436,6 +445,29 @@ setTimeout(async () => {
         JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']).fit === 'contain');
     }
 
+    // Mirror: a coverage-preserving flip, offered in EVERY fit mode.
+    {
+      const mirrorBtn = buttons.find((b) =>
+        Array.isArray(b.children) && b.children.includes('镜像'));
+      check('mirror toggle present in the fit row', Boolean(mirrorBtn));
+      if (mirrorBtn) {
+        mirrorBtn.props.onClick();
+        check('mirroring flips the media (scaleX -1)',
+          bodyEl.style._props['--webg-mirror'] === '-1',
+          bodyEl.style._props['--webg-mirror']);
+        check('mirror persisted',
+          JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']).mirrored === true);
+        const onTree = pickerRenders[0]();
+        const mirrorOn = collectButtons(onTree).find((b) =>
+          Array.isArray(b.children) && b.children.includes('镜像'));
+        check('mirror state reflected on the button',
+          String(mirrorOn && mirrorOn.props.className).includes('webg-btn--active'));
+        if (mirrorOn) mirrorOn.props.onClick();
+        check('mirroring toggles back off',
+          bodyEl.style._props['--webg-mirror'] === '1');
+      }
+    }
+
     // Manual crop: adjust overlay takes the LIVE layer; done puts it back.
     if (adjustBtn) {
       const layerBefore = documentMock.getElementById('wallpaper-engine-dsh-layer');
@@ -535,6 +567,21 @@ setTimeout(async () => {
         adjustBtn.props.onClick();
         const overlay = documentMock.body.children.find((c) => c._classes && c._classes.has('webg-adjust'));
         const handlers = overlay && overlay._listeners;
+        // Rotation lives here: the bar carries ±90° buttons (free only)…
+        const bar = overlay && overlay.children.find((c) => c._classes && c._classes.has('webg-adjust-bar'));
+        const barButtons = bar ? bar.children.filter((c) => c.tagName === 'BUTTON') : [];
+        check('free adjust bar carries ±90° rotate buttons', barButtons.length === 3,
+          String(barButtons.length));
+        check('free adjust hint mentions Alt+drag rotation',
+          Boolean(bar && bar.children.some((c) => typeof c.textContent === 'string' && c.textContent.includes('旋转'))));
+        const cw = barButtons.find((b) => b.textContent === '⟳');
+        if (cw && cw._listeners && cw._listeners.click) {
+          cw._listeners.click();
+          check('rotate button turns the media 90°',
+            bodyEl.style._props['--webg-rotate'] === '90deg' &&
+              JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']).rotation === 90,
+            bodyEl.style._props['--webg-rotate']);
+        }
         if (handlers && handlers.wheel && handlers.pointerdown) {
           handlers.wheel({ deltaY: 1000000, preventDefault() {} });
           const shrunk = JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']);
@@ -548,13 +595,35 @@ setTimeout(async () => {
           check('free drag is clamped to keep a sliver on screen',
             Math.abs(dragged.offsetX) <= reach + 1e-9 && dragged.offsetX < -40,
             JSON.stringify([dragged.zoom, dragged.offsetX, reach]));
+          // …and Alt+drag swings an arbitrary angle around the centre.
+          const before = JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']).rotation;
+          handlers.pointerdown({ clientX: 500, clientY: 300, target: overlay, altKey: true });
+          handlers.pointermove({ clientX: 100, clientY: 300 });
+          handlers.pointerup({});
+          const swung = JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']).rotation;
+          check('Alt+drag rotates by an arbitrary angle',
+            Number.isFinite(swung) && Math.abs(swung - before) > 30 && Math.abs(swung - before) < 90,
+            `${before} → ${swung}`);
         }
         if (documentMock._listeners.keydown) documentMock._listeners.keydown({ key: 'Escape' });
+        // Leaving free re-seats the crop into the gap-free envelope —
+        // rotation zeroes, mirroring survives (a flip never breaks coverage).
+        const mirrorForSwitch = collectButtons(pickerRenders[0]()).find((b) =>
+          Array.isArray(b.children) && b.children.includes('镜像'));
+        if (mirrorForSwitch) mirrorForSwitch.props.onClick();
         freeSelect.props.onChange({ target: { value: 'cover' } });
         const reseated = JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']);
         check('switching back to a gap-free fit re-seats the crop (zoom ≥ 1, pan in headroom)',
           reseated.zoom >= 1 && Math.abs(reseated.offsetX) <= (reseated.zoom - 1) * 50 + 1e-9,
           JSON.stringify([reseated.zoom, reseated.offsetX]));
+        check('switching back zeroes the rotation',
+          bodyEl.style._props['--webg-rotate'] === '0deg' && reseated.rotation === 0,
+          bodyEl.style._props['--webg-rotate']);
+        check('mirroring survives the mode switch',
+          bodyEl.style._props['--webg-mirror'] === '-1' && reseated.mirrored === true);
+        const mirrorAfter = collectButtons(pickerRenders[0]()).find((b) =>
+          Array.isArray(b.children) && b.children.includes('镜像'));
+        if (mirrorAfter) mirrorAfter.props.onClick(); // leave the flow unmirrored
         check('layer background returns to transparent outside free fit',
           bodyEl.style._props['--webg-layer-bg'] === 'transparent');
       }

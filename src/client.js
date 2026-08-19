@@ -26,8 +26,10 @@
  *      persists; falls back to the browser language.
  *   8. Canvas fit + manual crop (排布): object-fit base mode — plus Free,
  *      which drops the gap-free invariant: natural size on a black canvas,
- *      0.1–4× zoom, keep-visible pan — via a drag-to-pan / wheel-to-zoom
- *      adjust overlay (translate/scale transform) persisted per session.
+ *      0.1–4× zoom, arbitrary rotation, keep-visible pan — via a drag-to-
+ *      pan / wheel-to-zoom / Alt+drag-to-rotate adjust overlay (translate/
+ *      rotate/scale transform) persisted per session. Horizontal mirroring
+ *      (镜像) is a coverage-preserving flip and applies in EVERY mode.
  *   9. Legibility on any wallpaper: a theme-opposing veil (black in dark
  *      theme, white in light) with a luminance-adaptive "smart veil" floor.
  */
@@ -122,6 +124,12 @@ const STRINGS = {
     adjust: "调整画面",
     adjustDone: "完成",
     adjustHint: "拖动平移 · 滚轮缩放 · Esc 或点「完成」退出",
+    adjustHintFree: "拖动平移 · 滚轮缩放 · Alt+拖动旋转 · Esc 或点「完成」退出",
+    mirror: "镜像",
+    rotateCcw: "⟲",
+    rotateCw: "⟳",
+    rotateCcwTitle: "逆时针旋转 90°",
+    rotateCwTitle: "顺时针旋转 90°",
     resetCrop: "重置裁剪",
     statusGroup: (name, total, usable, interval, order) =>
       "列表「" + name + "」:" + total + " 项 · " + usable + " 可用 · 每 " + interval + " 分钟 · " + order,
@@ -200,6 +208,12 @@ const STRINGS = {
     adjust: "Adjust",
     adjustDone: "Done",
     adjustHint: "Drag to pan · wheel to zoom · Esc or Done to exit",
+    adjustHintFree: "Drag to pan · wheel to zoom · Alt+drag to rotate · Esc or Done to exit",
+    mirror: "Mirror",
+    rotateCcw: "⟲",
+    rotateCw: "⟳",
+    rotateCcwTitle: "Rotate 90° counterclockwise",
+    rotateCwTitle: "Rotate 90° clockwise",
     resetCrop: "Reset crop",
     statusGroup: (name, total, usable, interval, order) =>
       "List \"" + name + "\": " + total + " items · " + usable + " usable · every " + interval + " min · " + order,
@@ -253,6 +267,8 @@ const DEFAULTS = {
   zoom: 1,
   offsetX: 0,
   offsetY: 0,
+  rotation: 0, // free-fit only; degrees, positive = clockwise
+  mirrored: false, // horizontal flip, available in every fit mode
 };
 
 const FIT_MODES = ["cover", "contain", "fill", "none", "free"];
@@ -308,6 +324,8 @@ function readPersisted() {
       zoom: clampNum(o.zoom, 0.1, 4, DEFAULTS.zoom),
       offsetX: clampNum(o.offsetX, -300, 300, DEFAULTS.offsetX),
       offsetY: clampNum(o.offsetY, -300, 300, DEFAULTS.offsetY),
+      rotation: clampNum(o.rotation, -1080, 1080, DEFAULTS.rotation),
+      mirrored: o.mirrored === true,
     };
   } catch {
     return { id: "", ...DEFAULTS };
@@ -366,6 +384,8 @@ function persistSelection() {
       zoom: selection.zoom,
       offsetX: selection.offsetX,
       offsetY: selection.offsetY,
+      rotation: selection.rotation,
+      mirrored: selection.mirrored,
     }));
   } catch { /* storage full / blocked → session-only state, not fatal */ }
 }
@@ -761,18 +781,32 @@ function attachMediaError(media, sel) {
 //
 // Crop geometry is chosen by the fit mode. The four object-fit modes keep a
 // GAP-FREE invariant: the media box covers the viewport exactly at zoom 1,
-// zoom floors at 1, and pan is clamped to ±(zoom−1)/2·100 % — the image
-// always fills the screen. The "free" mode drops that invariant on purpose:
-// the media sits at natural size on a black canvas, zoom runs 0.1–4×, and
-// pan is only clamped to keep a sliver (≥10 % of the box) on screen so the
-// wallpaper can never be dragged entirely out of sight.
+// zoom floors at 1, pan is clamped to ±(zoom−1)/2·100 %, and rotation is
+// forced to 0 — a rotated rectangle cannot cover the screen, so turning
+// belongs to free mode only. Mirroring is allowed everywhere: a flip is
+// symmetric and never breaks coverage. The "free" mode drops the gap-free
+// invariant on purpose: the media sits at natural size on a black canvas,
+// zoom runs 0.1–4×, rotation is arbitrary, and pan is only clamped to keep
+// a sliver (≥10 % of the box) on screen so the wallpaper can never be
+// dragged entirely out of sight.
 function clampCrop() {
+  if (!isFreeFit()) selection.rotation = 0;
+  else {
+    // Keep the stored angle canonical (−180, 180]: Alt+drag can accumulate
+    // several full turns, and persisting raw degrees would come back from
+    // storage truncated at the ±1080 read clamp — a DIFFERENT visual angle.
+    // Modulo keeps every equivalent representation identical on disk.
+    selection.rotation = ((selection.rotation + 180) % 360 + 360) % 360 - 180;
+  }
   selection.zoom = Math.round(Math.min(4, Math.max(isFreeFit() ? 0.1 : 1, selection.zoom)) * 100) / 100;
   if (isFreeFit()) {
     // Content spans ±zoom·50 % of the box around its centre; the pan offset
-    // shifts it by its own % of the box. |offset| ≤ (zoom+1)·50 − 10 keeps
-    // at least 10 % of the media edge-to-edge visible in both axes.
-    const reach = (selection.zoom + 1) * 50 - 10;
+    // shifts it by its own % of the box. Rotation expands the projected
+    // extent by k = |cos θ| + |sin θ| (up to √2 at 45°). |offset| ≤
+    // (zoom·k+1)·50 − 10 keeps ≥10 % of the media visible in both axes.
+    const rad = selection.rotation * Math.PI / 180;
+    const k = Math.abs(Math.cos(rad)) + Math.abs(Math.sin(rad));
+    const reach = (selection.zoom * k + 1) * 50 - 10;
     selection.offsetX = Math.min(reach, Math.max(-reach, selection.offsetX));
     selection.offsetY = Math.min(reach, Math.max(-reach, selection.offsetY));
     return;
@@ -813,12 +847,31 @@ function enterAdjust() {
   bar.className = "webg-adjust-bar";
   const hint = document.createElement("span");
   hint.className = "webg-adjust-hint";
-  hint.textContent = S().adjustHint;
+  hint.textContent = isFreeFit() ? S().adjustHintFree : S().adjustHint;
   const done = document.createElement("button");
   done.type = "button";
   done.className = "webg-btn webg-btn--primary";
   done.textContent = S().adjustDone;
   bar.appendChild(hint);
+  // Free fit only: a rotated rectangle cannot cover the screen, so turning
+  // exists solely where exposed edges are allowed. ±90° buttons cover the
+  // common cases; arbitrary angles come from Alt+drag below.
+  if (isFreeFit()) {
+    for (const dir of [-90, 90]) {
+      const rot = document.createElement("button");
+      rot.type = "button";
+      rot.className = "webg-btn";
+      rot.textContent = dir < 0 ? S().rotateCcw : S().rotateCw;
+      rot.title = dir < 0 ? S().rotateCcwTitle : S().rotateCwTitle;
+      rot.addEventListener("click", () => {
+        selection.rotation += dir;
+        clampCrop();
+        applyEffects();
+        persistSelection();
+      });
+      bar.appendChild(rot);
+    }
+  }
   bar.appendChild(done);
   overlay.appendChild(bar);
   document.body.appendChild(overlay);
@@ -828,14 +881,34 @@ function enterAdjust() {
   // translate() in the transform list is applied AFTER scale() (right-to-
   // left), so pan deltas are independent of zoom: dx px = dx/width %.
   let drag = null;
+  // Alt+drag (free fit): swing the media around the overlay's centre —
+  // the angle delta between pointer positions becomes the rotation delta.
+  let rot = null; // { a0: starting pointer angle, base: starting rotation }
+  const centerAngle = (e) => {
+    const cx = (overlay.clientWidth || 1) / 2;
+    const cy = (overlay.clientHeight || 1) / 2;
+    return Math.atan2(e.clientY - cy, e.clientX - cx);
+  };
   const onPointerDown = (e) => {
     if (e.target === done || bar.contains(e.target)) return;
-    drag = { x: e.clientX, y: e.clientY };
+    if (e.altKey && isFreeFit()) {
+      rot = { a0: centerAngle(e), base: selection.rotation };
+    } else {
+      drag = { x: e.clientX, y: e.clientY };
+    }
+    // Capture for EITHER gesture: pointer moves must keep arriving even
+    // when the cursor leaves the window mid-swing.
     if (overlay.setPointerCapture && e.pointerId !== undefined) {
       try { overlay.setPointerCapture(e.pointerId); } catch {}
     }
   };
   const onPointerMove = (e) => {
+    if (rot) {
+      selection.rotation = rot.base + (centerAngle(e) - rot.a0) * 180 / Math.PI;
+      clampCrop();
+      applyEffects();
+      return;
+    }
     if (!drag) return;
     // translate % refers to the media box, which is the viewport exactly —
     // divide the pixel delta by it so the content tracks the cursor 1:1.
@@ -847,18 +920,16 @@ function enterAdjust() {
     drag = { x: e.clientX, y: e.clientY };
     applyEffects();
   };
-  const onPointerUp = () => {
+  const endPointer = () => {
+    if (rot) { rot = null; persistSelection(); return; }
     if (!drag) return;
     drag = null;
     persistSelection();
   };
+  const onPointerUp = endPointer;
   // pointercancel (touch gesture takeover): end the drag without losing the
   // current offsets — otherwise drag stays "stuck" until the next pointerup.
-  const onPointerCancel = () => {
-    if (!drag) return;
-    drag = null;
-    persistSelection();
-  };
+  const onPointerCancel = endPointer;
   const onWheel = (e) => {
     if (typeof e.preventDefault === "function") e.preventDefault();
     // clampCrop enforces the mode's zoom floor: the gap-free modes never
@@ -897,6 +968,7 @@ function resetCrop() {
   selection.zoom = 1;
   selection.offsetX = 0;
   selection.offsetY = 0;
+  selection.rotation = 0; // framing geometry home; mirroring keeps its own toggle
   persistSelection();
   applyEffects();
   emit();
@@ -1055,7 +1127,7 @@ function applyEffects() {
   const key = [
     dark, selection.scrim, selection.border, selection.blur, selection.wallpaperBlur,
     selection.autoScrim, sampledLuminance, selection.fit, selection.zoom,
-    selection.offsetX, selection.offsetY,
+    selection.offsetX, selection.offsetY, selection.rotation, selection.mirrored,
   ].join("\u0000");
   if (key === lastEffectKey) return; // nothing it reads changed → no writes, no reflow
   lastEffectKey = key;
@@ -1098,6 +1170,8 @@ function applyEffects() {
   s.setProperty("--webg-zoom", String(selection.zoom));
   s.setProperty("--webg-offset-x", selection.offsetX + "%");
   s.setProperty("--webg-offset-y", selection.offsetY + "%");
+  s.setProperty("--webg-rotate", selection.rotation + "deg");
+  s.setProperty("--webg-mirror", selection.mirrored ? "-1" : "1");
 
   // Write the scrim colour directly too, then force a synchronous layout, so
   // slider feedback lands on this frame even on stalled compositors.
@@ -1124,6 +1198,8 @@ function clearEffects() {
   s.removeProperty("--webg-zoom");
   s.removeProperty("--webg-offset-x");
   s.removeProperty("--webg-offset-y");
+  s.removeProperty("--webg-rotate");
+  s.removeProperty("--webg-mirror");
   const scrim = document.getElementById(SCRIM_ID);
   if (scrim) scrim.style.background = "";
 }
@@ -1319,9 +1395,18 @@ function onWallpaperBlur(px) { selection.wallpaperBlur = px; persistSelection();
 function onFit(e) {
   selection.fit = FIT_MODES.indexOf(e.target.value) >= 0 ? e.target.value : "cover";
   // Re-seat the crop into the new mode's envelope: leaving free for a
-  // gap-free mode pulls zoom back up to 1 and reins the pan in; the other
-  // direction only ever relaxes bounds, so the framing carries over.
+  // gap-free mode pulls zoom back up to 1, reins the pan in and zeroes the
+  // rotation; the other direction only ever relaxes bounds, so the framing
+  // carries over. Mirroring survives every switch — a flip never breaks
+  // coverage.
   clampCrop();
+  persistSelection();
+  applyEffects();
+  emit();
+}
+
+function onToggleMirror() {
+  selection.mirrored = !selection.mirrored;
   persistSelection();
   applyEffects();
   emit();
@@ -1566,6 +1651,13 @@ function EffectsPanel(t, sel) {
       ...[t.fitCover, t.fitContain, t.fitFill, t.fitNone, t.fitFree].map((label, i) =>
         React.createElement("option", { key: FIT_MODES[i], value: FIT_MODES[i] }, label),
       )),
+      // Mirror is a coverage-preserving flip: valid in EVERY fit mode and
+      // for every wallpaper kind (the transform applies to iframes too).
+      React.createElement("button", {
+        className: "webg-btn" + (sel.mirrored ? " webg-btn--active" : ""),
+        type: "button",
+        onClick: onToggleMirror,
+      }, t.mirror),
       React.createElement("button", {
         className: "webg-btn", type: "button", onClick: enterAdjust,
         disabled: sel.adjusting,
@@ -1707,9 +1799,13 @@ const CSS = `
     display: block;
     background: transparent; border: 0;
     filter: var(--webg-media-filter, none);
-    /* Manual crop: pan offsets are % of the media box (independent of zoom
-       because translate is listed before scale), zoom is centered. */
-    transform: translate(var(--webg-offset-x, 0%), var(--webg-offset-y, 0%)) scale(var(--webg-zoom, 1));
+    /* Manual crop: the transform list is ordered pan → rotate → zoom →
+       mirror. translate comes first so pan offsets stay screen-aligned no
+       matter the rotation; mirror is innermost so the flip happens in the
+       media's own axes. */
+    transform: translate(var(--webg-offset-x, 0%), var(--webg-offset-y, 0%))
+      rotate(var(--webg-rotate, 0deg)) scale(var(--webg-zoom, 1))
+      scaleX(var(--webg-mirror, 1));
     transform-origin: center center;
   }
 
@@ -1830,16 +1926,31 @@ const CSS = `
     border-color: var(--dsw-alias-border-l1, rgba(128, 128, 128, 0.5));
   }
   .webg-btn:disabled { opacity: 0.45; cursor: not-allowed; }
-  /* brand-primary is monochrome (near-black light / near-white dark), so
-     the label must use its inverse token — never a hardcoded white. */
+  /* brand-primary is monochrome (near-black light / near-white dark). The
+     shell's brand-primary-INVERT token aliases the same shade as brand-
+     primary itself in both themes (no contrast), so anything sitting ON a
+     brand-primary fill takes its contrast colour from the inverted label
+     ramp instead — near-white on the dark light-theme fill, dark bluish-800
+     on the near-white dark-theme fill. */
+  body {
+    --webg-on-brand: var(--dsw-alias-label-primary-inverted,
+      var(--dsw-alias-label-primary-foreground, rgb(249, 250, 251)));
+  }
   .webg-btn--primary {
     background: var(--dsw-alias-brand-primary, rgb(15, 17, 21));
     border-color: transparent;
-    color: var(--dsw-alias-brand-primary-invert, rgb(249, 250, 251));
+    color: var(--webg-on-brand);
   }
   .webg-btn--primary:hover:not(:disabled) {
     background: var(--dsw-alias-brand-primary, rgb(15, 17, 21));
     opacity: 0.85;
+  }
+  /* Toggle-style button showing an engaged state (e.g. 镜像): brand fill
+     with the contrasting on-brand label. */
+  .webg-btn--active {
+    background: var(--dsw-alias-brand-primary, rgb(15, 17, 21));
+    border-color: transparent;
+    color: var(--webg-on-brand);
   }
 
   .webg-select, .webg-text {
@@ -1900,7 +2011,7 @@ const CSS = `
     -webkit-appearance: none;
     width: 14px; height: 14px; border-radius: 50%;
     margin-top: -5px; /* centers the 14px thumb on the 4px track */
-    background: var(--dsw-alias-brand-primary-invert, rgb(249, 250, 251));
+    background: var(--webg-on-brand);
     border: 2.5px solid var(--dsw-alias-brand-primary, rgb(15, 17, 21));
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
     transition: transform 120ms ease;
@@ -1998,7 +2109,7 @@ const CSS = `
     position: absolute; top: 4px; left: 4px; width: 18px; height: 18px;
     border-radius: 4px;
     background: var(--dsw-alias-brand-primary, rgb(15, 17, 21));
-    color: var(--dsw-alias-brand-primary-invert, rgb(249, 250, 251));
+    color: var(--webg-on-brand);
     font-size: 12px; line-height: 18px; text-align: center;
   }
 `;
