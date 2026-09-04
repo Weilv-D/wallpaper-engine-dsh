@@ -717,6 +717,7 @@ function buildMedia(sel) {
     media = document.createElement("iframe");
     media.src = sel.url;
     media.setAttribute("sandbox", "allow-scripts");
+    media.setAttribute("allow", "autoplay");
     media.setAttribute("referrerpolicy", "no-referrer");
     media.setAttribute("frameborder", "0");
     media.setAttribute("scrolling", "no");
@@ -1048,7 +1049,13 @@ function syncLayers() {
       if (existing) {
         existing.classList.add("webg-layer--leave");
         const stale = existing;
-        schedule(() => stale.remove(), LEAVE_MS);
+        schedule(() => {
+          const v = stale.querySelector("video");
+          if (v) { v.pause(); v.removeAttribute("src"); if (typeof v.load === "function") v.load(); }
+          const f = stale.querySelector("iframe");
+          if (f) { f.src = "about:blank"; }
+          stale.remove();
+        }, LEAVE_MS);
       }
     }
     const node = document.getElementById(LAYER_ID);
@@ -1064,11 +1071,18 @@ function syncLayers() {
     existing.classList.add("webg-layer--leave");
     const stale = existing;
     schedule(() => {
+      const v = stale.querySelector("video");
+      if (v) { v.pause(); v.removeAttribute("src"); if (typeof v.load === "function") v.load(); }
+      const f = stale.querySelector("iframe");
+      if (f) { f.src = "about:blank"; }
       stale.remove();
       if (!document.getElementById(LAYER_ID)) {
         const s = document.getElementById(SCRIM_ID);
         if (s) s.remove();
         document.body.removeAttribute(ACTIVE_ATTR);
+        if (previewProbe) { previewProbe.remove(); previewProbe = null; }
+        sampledLuminance = null;
+        clearEffects();
       }
     }, LEAVE_MS);
   }
@@ -1089,6 +1103,9 @@ function syncLayers() {
       if (selection.type === "web") {
         const w = selection.inventory.wallpapers.find((x) => x.id === selection.id);
         if (w && w.preview) probePreviewLuminance(w.preview);
+      } else if (previewProbe) {
+        previewProbe.remove();
+        previewProbe = null;
       }
     }
 }
@@ -1176,9 +1193,10 @@ function applyEffects() {
   // wallpapers, light theme (dark text) brightens dark ones — either way the
   // text side wins. This is what makes ANY wallpaper survivable.
   const dark = Boolean(document.body.hasAttribute && document.body.hasAttribute("data-ds-dark-theme"));
+  const roundedLum = sampledLuminance !== null ? Math.round(sampledLuminance * 100) / 100 : null;
   const key = [
     dark, selection.scrim, selection.border, selection.blur, selection.wallpaperBlur,
-    selection.autoScrim, sampledLuminance, selection.fit, selection.zoom,
+    selection.autoScrim, roundedLum, selection.fit, selection.zoom,
     selection.offsetX, selection.offsetY, selection.rotation, selection.mirrored,
   ].join("\u0000");
   if (key === lastEffectKey) return; // nothing it reads changed → no writes, no reflow
@@ -1229,9 +1247,6 @@ function applyEffects() {
   // slider feedback lands on this frame even on stalled compositors.
   const scrim = document.getElementById(SCRIM_ID);
   if (scrim) scrim.style.background = veilColor;
-  if (document.body && document.body.offsetHeight !== undefined) {
-    void document.body.offsetHeight;
-  }
 }
 
 function clearEffects() {
@@ -1271,7 +1286,7 @@ function SliderRow(label, min, max, step, value, onInput, suffix) {
     }
     onInput(v);
   };
-  return React.createElement(React.Fragment, null,
+  return React.createElement(React.Fragment, { key: label },
     React.createElement("span", { className: "webg-hint webg-label" }, label),
     React.createElement("input", {
       className: "webg-slider", type: "range",
@@ -1475,6 +1490,7 @@ function SearchRow(t, sel, query, setQuery, matched, total) {
       className: "webg-text webg-search", type: "search",
       placeholder: t.searchPlaceholder,
       value: query,
+      onChange: (e) => setQuery(e.target.value),
       onInput: (e) => setQuery(e.target.value),
     }),
     query.trim() && React.createElement("span", { className: "webg-hint" },
@@ -1505,14 +1521,14 @@ function WallpaperGrid(t, sel, usableList, filteredList, q) {
     React.createElement("span", { className: "webg-card-close" }, t.closeCard),
     ),
     usableList.length === 0
-      ? React.createElement("span", { className: "webg-hint" },
+      ? React.createElement("span", { className: "webg-hint webg-grid-empty" },
           sel.inventory.installDir
             ? (sel.inventory.total > 0
                 ? t.emptyNoUsable(sel.inventory.total)
                 : t.emptyNoProjects)
             : t.emptyNoInstall)
       : filteredList.length === 0
-        ? React.createElement("span", { className: "webg-hint" }, t.noMatch(q))
+        ? React.createElement("span", { className: "webg-hint webg-grid-empty" }, t.noMatch(q))
         : filteredList.map((w) => ThumbCard(w, w.id === sel.id, () => applySelection(w.id), t)),
   );
 }
@@ -1592,7 +1608,9 @@ function GroupEditorPanel(t, sel, usableList, editorQuery, setEditorQuery) {
       React.createElement("input", {
         className: "webg-text", type: "text",
         value: editing.name,
-        onInput: (e) => { editing.name = e.target.value; emit(); },
+        onChange: (e) => { editing.name = e.target.value; if (!e.nativeEvent || !e.nativeEvent.isComposing) emit(); },
+        onInput: (e) => { editing.name = e.target.value; },
+        onCompositionEnd: (e) => { editing.name = e.target.value; emit(); },
       }),
     ),
     React.createElement("div", { className: "webg-row" },
@@ -1617,6 +1635,7 @@ function GroupEditorPanel(t, sel, usableList, editorQuery, setEditorQuery) {
       className: "webg-text", type: "search",
       placeholder: t.filterPlaceholder,
       value: editorQuery,
+      onChange: (e) => setEditorQuery(e.target.value),
       onInput: (e) => setEditorQuery(e.target.value),
     }),
     React.createElement("div", { className: "webg-editor-grid" },
@@ -1624,10 +1643,10 @@ function GroupEditorPanel(t, sel, usableList, editorQuery, setEditorQuery) {
         const eq = editorQuery.trim();
         const pool = usableList.filter((w) => matchesQuery(w, eq));
         if (usableList.length === 0) {
-          return React.createElement("span", { className: "webg-hint" }, t.noUsable);
+          return React.createElement("span", { className: "webg-hint webg-grid-empty" }, t.noUsable);
         }
         if (pool.length === 0) {
-          return React.createElement("span", { className: "webg-hint" }, t.noMatch(eq));
+          return React.createElement("span", { className: "webg-hint webg-grid-empty" }, t.noMatch(eq));
         }
         return pool.map((w) => EditorCard(w, editing, t));
       })(),
@@ -1714,7 +1733,7 @@ function EffectsPanel(t, sel) {
         className: "webg-btn", type: "button", onClick: enterAdjust,
         disabled: sel.adjusting,
       }, t.adjust),
-      (sel.zoom !== 1 || sel.offsetX !== 0 || sel.offsetY !== 0) &&
+      (sel.zoom !== 1 || sel.offsetX !== 0 || sel.offsetY !== 0 || sel.rotation !== 0) &&
         React.createElement("button", {
           className: "webg-btn", type: "button", onClick: resetCrop,
         }, t.resetCrop),
@@ -2099,6 +2118,11 @@ const CSS = `
     display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
     gap: 8px; max-height: 300px; overflow-y: auto; padding: 2px;
   }
+  .webg-grid-empty {
+    grid-column: 1 / -1;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px 12px; text-align: center;
+  }
   .webg-card {
     position: relative; width: 100%; padding: 0; cursor: pointer;
     aspect-ratio: 16 / 9; display: block; overflow: hidden;
@@ -2352,7 +2376,7 @@ function apply(ctx) {
   if (ctx.slots) {
     ctx.slots.inject("settings.general.item", () =>
       ctx.slots.register(
-        { name: "settings.general.item", id: "we-background", order: 500, label: S().settingsLabel },
+        { name: "settings.general.item", id: "we-background", order: 500, label: () => S().settingsLabel },
         () => React.createElement(WallpaperPicker),
       ),
     );

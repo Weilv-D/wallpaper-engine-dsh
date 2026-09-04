@@ -866,8 +866,11 @@ setTimeout(async () => {
     check('default language is Chinese (刷新 button)', buttons.some((b) =>
       Array.isArray(b.children) && b.children.includes('刷新')));
     check('settings row label is Chinese',
-      registrations.some((r) => r.label === '壁纸背景 (Wallpaper Engine)'),
-      JSON.stringify(registrations.map((r) => r.label)));
+      registrations.some((r) => {
+        const text = typeof r.label === 'function' ? r.label() : r.label;
+        return text === '壁纸背景 (Wallpaper Engine)';
+      }),
+      JSON.stringify(registrations.map((r) => typeof r.label === 'function' ? r.label() : r.label)));
     if (langSelect) {
       langSelect.props.onChange({ target: { value: 'en' } });
       check('language choice persisted',

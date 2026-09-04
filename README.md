@@ -64,6 +64,7 @@ Media serving is defensive by design: tokens are unguessable 72-bit values, stab
 
 - Scene and application wallpapers are not listed: they are Wallpaper Engine's private `.pkg` scene packages, and their live animation can only be rendered by Wallpaper Engine itself on the desktop.
 - Web wallpapers run isolated from the page's storage, so ones that persist state across loads won't keep it.
+- Web wallpapers with sound may stay silent until you interact with the page — browsers gate audio in sandboxed documents on a user gesture, and wallpapers that rely on Wallpaper Engine's system-audio feed (visualizers) have no signal to draw from.
 - The glass effect reads DSH design tokens; if a future shell redesign renames them, frosting degrades to plain transparency.
 
 ## Development
