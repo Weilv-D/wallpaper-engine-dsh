@@ -786,6 +786,43 @@ setTimeout(async () => {
           const revived = documentMock.getElementById('wallpaper-engine-dsh-layer').children[0];
           check('manual refresh clears the demotion and retries the video',
             revived && revived.tagName === 'VIDEO', revived && revived.tagName);
+
+      // Zero-decoded-frames path: the element claims to play (no error
+      // event) but decodes nothing - the HEVC-black-screen case. Manual
+      // refresh above reset the failure ladder, so this runs it again
+      // from the top: hit 1 recovers (fresh remount), hit 2 demotes.
+      {
+        const zf = documentMock.getElementById('wallpaper-engine-dsh-layer').children[0];
+        check('zero-frame probe listener attached to playing',
+          Boolean(zf && zf._listeners && zf._listeners.playing));
+        if (zf && zf._listeners && zf._listeners.playing) {
+          zf.getVideoPlaybackQuality = () => ({ totalVideoFrames: 0 });
+          zf.paused = false;
+          zf.currentTime = 3;
+          // Hit 1 (count 1): recovers by remounting a FRESH video element,
+          // so round 2 must fire on the new element - the stale-guard on
+          // the probe rejects the old one by design.
+          zf._listeners.playing();
+          const probe1 = timers.find((t) => !t.cleared && t.ms === 2000 && !t.fired);
+          check('zero-frame probe scheduled 2s after playing', Boolean(probe1));
+          if (probe1) probe1.fn();
+          const zf2 = documentMock.getElementById('wallpaper-engine-dsh-layer').children[0];
+          check('zero-frame hit 1 remounts a fresh video element',
+            Boolean(zf2 && zf2.tagName === 'VIDEO' && zf2 !== zf),
+            zf2 && zf2.tagName);
+          zf2.getVideoPlaybackQuality = () => ({ totalVideoFrames: 0 });
+          zf2.paused = false;
+          zf2.currentTime = 3;
+          zf2._listeners.playing();
+          const probe2 = timers.find((t) => !t.cleared && t.ms === 2000 && !t.fired);
+          check('zero-frame probe 2 scheduled on the remounted element', Boolean(probe2));
+          if (probe2) probe2.fn();
+          const demoted = documentMock.getElementById('wallpaper-engine-dsh-layer').children[0];
+          check('zero-decoded-frames playing demotes to the preview still',
+            demoted && demoted.tagName === 'IMG' && /\/preview\//.test(String(demoted.src || '')),
+            demoted && demoted.tagName + ' ' + (demoted.src || ''));
+        }
+      }
         }
       }
     }

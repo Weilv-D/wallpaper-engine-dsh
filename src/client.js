@@ -758,32 +758,64 @@ function attachStillSampling(media, sel) {
   });
 }
 
+function handleMediaFailure(sel) {
+  const id = sel.id;
+  const count = (mediaFailures.get(id) || 0) + 1;
+  mediaFailures.set(id, count);
+  const w = selection.inventory.wallpapers.find((x) => x.id === id);
+  if (count === 1) {
+    // Maybe just a dead token: refetch fresh URLs and remount. Throttled
+    // PER WALLPAPER - a global window would strand a video whose first
+    // error lands soon after an unrelated recovery (no remount, no second
+    // error, blank layer until a manual refresh).
+    const now = Date.now();
+    if (now - (lastRecoveryAt.get(id) || 0) < 10000) return;
+    lastRecoveryAt.set(id, now);
+    forceRemount = true;
+    loadInventory(true);
+  } else if (w && w.preview && !demotedToPreview.has(id)) {
+    // The media itself is unusable here - fall back to the still preview.
+    demotedToPreview.add(id);
+    applySelection(id);
+  } else {
+    // Unrenderable here with no preview to fall back on (or the entry has
+    // vanished from the inventory entirely): clear the selection rather
+    // than leave a dead element on the layer.
+    applySelection("");
+  }
+}
+
 function attachMediaError(media, sel) {
-  media.addEventListener("error", () => {
-    const id = sel.id;
-    const count = (mediaFailures.get(id) || 0) + 1;
-    mediaFailures.set(id, count);
-    const w = selection.inventory.wallpapers.find((x) => x.id === id);
-    if (count === 1) {
-      // Maybe just a dead token: refetch fresh URLs and remount. Throttled
-      // PER WALLPAPER — a global window would strand a video whose first
-      // error lands soon after an unrelated recovery (no remount, no second
-      // error, blank layer until a manual refresh).
-      const now = Date.now();
-      if (now - (lastRecoveryAt.get(id) || 0) < 10000) return;
-      lastRecoveryAt.set(id, now);
-      forceRemount = true;
-      loadInventory(true);
-    } else if (w && w.preview && !demotedToPreview.has(id)) {
-      // The media itself is unusable here — fall back to the still preview.
-      demotedToPreview.add(id);
-      applySelection(id);
-    } else {
-      // Unrenderable here with no preview to fall back on (or the entry has
-      // vanished from the inventory entirely): clear the selection rather
-      // than leave a dead element on the layer.
-      applySelection("");
-    }
+  media.addEventListener("error", () => handleMediaFailure(sel));
+  if (sel.type === "video") attachZeroFrameDetector(media, sel);
+}
+
+// Zero-decoded-frames detector: Chromium can report a video as PLAYING
+// without ever decoding a frame - no error event, currentTime advancing,
+// picture permanently black. Typical with HEVC/H.265 content when the
+// machine has no usable hardware decode. getVideoPlaybackQuality exposes
+// the truth (totalVideoFrames stays 0); a genuinely dark wallpaper is
+// unaffected because its frames DO decode. Wired into the same recovery
+// ladder as a media error: first hit retries with fresh tokens, second
+// hit demotes to the preview still (or clears without one).
+function attachZeroFrameDetector(media, sel) {
+  media.addEventListener("playing", () => {
+    // One probe ~2s into claimed playback: enough for even a slow
+    // hardware pipeline to produce its first frames.
+    schedule(() => {
+      // Stale guard: crossfade may have swapped the element out already,
+      // and the probe must never run while the user paused playback.
+      const layer = document.getElementById(LAYER_ID);
+      if (!layer || layer.querySelector("video") !== media) return;
+      if (media.paused || !(media.currentTime > 0)) return;
+      const q = typeof media.getVideoPlaybackQuality === "function"
+        ? media.getVideoPlaybackQuality() : null;
+      const frames = q ? q.totalVideoFrames
+        : (typeof media.webkitDecodedFrameCount === "number"
+          ? media.webkitDecodedFrameCount : null);
+      if (frames === null) return; // no probe available -> cannot detect
+      if (frames === 0) handleMediaFailure(sel);
+    }, 2000);
   });
 }
 

@@ -73,6 +73,7 @@ Media serving is defensive by design: tokens are unguessable 72-bit values, stab
 - Scene and application wallpapers are not listed: they are Wallpaper Engine's private `.pkg` scene packages, and their live animation can only be rendered by Wallpaper Engine itself on the desktop.
 - Web wallpapers run isolated from the page's storage, so ones that persist state across loads won't keep it.
 - Web wallpapers with sound may stay silent until you interact with the page — browsers gate audio in sandboxed documents on a user gesture, and wallpapers that rely on Wallpaper Engine's system-audio feed (visualizers) have no signal to draw from.
+- Video codecs are bounded by what the browser can decode. H.264/AVC, VP8/VP9, and AV1 play natively; workshop videos compressed with H.265/HEVC cannot be software-decoded on most machines — previously a solid black screen, now detected as "playing but zero decoded frames" and automatically demoted to the preview still with a status note. Transcoding to H.264 mp4 or VP9 webm restores full playback.
 - The glass effect reads DSH design tokens; if a future shell redesign renames them, frosting degrades to plain transparency.
 
 ## Development
