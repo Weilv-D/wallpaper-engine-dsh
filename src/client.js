@@ -131,6 +131,7 @@ const STRINGS = {
     adjustDone: "完成",
     adjustHint: "拖动平移 · 滚轮缩放 · Esc 或点「完成」退出",
     adjustHintFree: "拖动平移 · 滚轮缩放 · Alt+拖动旋转 · Esc 或点「完成」退出",
+    adjustHintZoom: "当前倍数下画面已铺满,先滚轮放大,即可拖动平移",
     mirror: "镜像",
     rotateCcw: "⟲",
     rotateCw: "⟳",
@@ -215,6 +216,7 @@ const STRINGS = {
     adjustDone: "Done",
     adjustHint: "Drag to pan · wheel to zoom · Esc or Done to exit",
     adjustHintFree: "Drag to pan · wheel to zoom · Alt+drag to rotate · Esc or Done to exit",
+    adjustHintZoom: "The picture already fills the screen — zoom in with the wheel to unlock panning",
     mirror: "Mirror",
     rotateCcw: "⟲",
     rotateCw: "⟳",
@@ -858,7 +860,15 @@ function enterAdjust() {
   bar.className = "webg-adjust-bar";
   const hint = document.createElement("span");
   hint.className = "webg-adjust-hint";
-  hint.textContent = isFreeFit() ? S().adjustHintFree : S().adjustHint;
+  const updateHint = () => {
+    // Pan feedback: in the gap-free fits the pan headroom is (zoom-1)*50,
+    // so at zoom 1 dragging is pinned BY DESIGN - say so instead of
+    // leaving a silent no-op that reads as "pan is broken".
+    hint.textContent = isFreeFit() ? S().adjustHintFree
+      : selection.zoom > 1 ? S().adjustHint
+      : S().adjustHintZoom;
+  };
+  updateHint();
   const done = document.createElement("button");
   done.type = "button";
   done.className = "webg-btn webg-btn--primary";
@@ -930,6 +940,7 @@ function enterAdjust() {
     clampCrop(); // mode envelope: gap-free pan headroom, or free keep-visible
     drag = { x: e.clientX, y: e.clientY };
     applyEffects();
+    updateHint();
   };
   const endPointer = () => {
     if (rot) { rot = null; persistSelection(); return; }
@@ -950,6 +961,7 @@ function enterAdjust() {
     selection.zoom *= Math.exp(-(e.deltaY || 0) * 0.0012);
     clampCrop();
     applyEffects();
+    updateHint();
     persistSelection();
   };
   const onKey = (e) => { if (e.key === "Escape") exitAdjust(); };
@@ -1925,12 +1937,18 @@ const CSS = `
   .webg-adjust {
     position: fixed; inset: 0; z-index: 2147483000;
     cursor: grab; touch-action: none;
+    /* Desktop: the shell titlebar strip is a window-drag region and the
+       union drag region ignores z-order - without no-drag, drags starting
+       near the top of the adjust overlay move the WINDOW instead of
+       panning, and the bar's Done button stops receiving clicks. */
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
   }
   .webg-adjust:active { cursor: grabbing; }
   .webg-adjust .webg-layer { position: absolute; z-index: 0; }
   .webg-adjust-bar {
     position: absolute; top: 18px; left: 50%; transform: translateX(-50%);
-    z-index: 1; cursor: default;
+    z-index: 1; cursor: default; -webkit-app-region: no-drag; app-region: no-drag;
     display: flex; align-items: center; gap: 12px;
     padding: 8px 8px 8px 14px; border-radius: 12px;
     background: var(--dsw-alias-bg-overlay, rgba(30, 32, 38, 0.85));
@@ -2013,9 +2031,9 @@ const CSS = `
      Same on the queue dock panel (:before carries the blur). With a
      wallpaper active, menus showed sharp content through a 45% fill.
      An element's OWN backdrop-filter ignores its own isolation, so
-     the filter moves onto the surface element; fill deepened 72%. */
-  body[${ACTIVE_ATTR}] { --dsw-menu-surface-fill: rgba(67, 69, 74, 0.72); }
-  body[${ACTIVE_ATTR}]:not([${DARK_ATTR}]) { --dsw-menu-surface-fill: rgba(248, 249, 250, 0.72); }
+     the filter moves onto the surface element; fill deepened 85%. */
+  body[${ACTIVE_ATTR}] { --dsw-menu-surface-fill: rgba(67, 69, 74, 0.85); }
+  body[${ACTIVE_ATTR}]:not([${DARK_ATTR}]) { --dsw-menu-surface-fill: rgba(248, 249, 250, 0.85); }
   body[${ACTIVE_ATTR}] [data-menu-material],
   body[${ACTIVE_ATTR}] [data-composer-dock] [class*="_panel"] {
     -webkit-backdrop-filter: blur(var(--webg-blur, 16px)) saturate(var(--webg-saturate, 1.2)) brightness(var(--webg-glass-brightness, 1.04)) contrast(1.01);
