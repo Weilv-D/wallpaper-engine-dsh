@@ -242,13 +242,22 @@ const { factory } = cap.handoff;
 const requireMock = (spec) => { if (spec === 'react') return React; throw new Error('unexpected require: ' + spec); };
 const exportsObj = factory(requireMock);
 check('exports apply + inject', typeof exportsObj.apply === 'function' && Array.isArray(exportsObj.inject));
-check('inject declares slots', JSON.stringify(exportsObj.inject) === '["slots"]');
+check('inject declares slots, locale, theme',
+  JSON.stringify(exportsObj.inject) === '["slots","locale","theme"]',
+  JSON.stringify(exportsObj.inject));
+check('bundle carries no legacy data-ds-dark-theme hook', !code.includes('data-ds-dark-theme'));
 check('Symbol.toStringTag is Module', Object.prototype.toString.call(exportsObj) === '[object Module]');
 
 // ── apply() with a mock Cordis ctx ──────────────────────────────────────────
 const registrations = [];
 const cleanups = [];
 const pickerRenders = [];
+const eventHandlers = {};
+let themeIsDark = false;
+const themeSvc = {
+  getTheme: () => ({ active: { colorScheme: themeIsDark ? 'dark' : 'light' } }),
+};
+const localeSvc = { getLocale: () => ({ active: 'zh' }) };
 const slots = {
   inject: (key, cb) => cb(),
   register: (opts, render) => {
@@ -258,7 +267,17 @@ const slots = {
 };
 const ctx = {
   slots,
+  get: (name) => (name === 'theme' ? themeSvc : name === 'locale' ? localeSvc : undefined),
+  on: (event, handler) => { (eventHandlers[event] = eventHandlers[event] || []).push(handler); },
   effect(fn) { const cleanup = fn(); if (typeof cleanup === 'function') cleanups.push(cleanup); },
+};
+// Theme flips now arrive through the shell theme service's event, not a DOM
+// attribute mutation.
+const emitTheme = (dark) => {
+  themeIsDark = dark;
+  for (const h of eventHandlers['theme/change'] || []) {
+    h({ active: { colorScheme: dark ? 'dark' : 'light' } });
+  }
 };
 
 let thrown = null;
@@ -283,6 +302,8 @@ check('style tag injected on apply', headEl.children.some((n) => n.tagName === '
     styleCss.includes('color-scheme: normal'));
 }
 check('initial fetch hits inventory', fetchCalls.includes('/we-background/inventory'), fetchCalls.join(','));
+check('theme/change handler bound for shell theme service',
+  Array.isArray(eventHandlers['theme/change']) && eventHandlers['theme/change'].length > 0);
 
 // Walk a rendered picker tree for button / select descriptors.
 function collectButtons(tree) { return collectByType(tree, 'button'); }
@@ -672,15 +693,17 @@ setTimeout(async () => {
       check('border slider clamps a persisted 1.0 to its 90 ceiling',
         sliders[2].props.value === '90', sliders[2].props.value);
       const scrimSlider = sliders[1]; // 壁纸模糊, 暗化, 边框, 玻璃
-      bodyEl.setAttribute('data-ds-dark-theme', '');
+      emitTheme(true);
       scrimSlider.props.onChange({ target: { value: '25', style: { setProperty() {} } } });
       check('veil flips to black in dark theme',
         bodyEl.style._props['--webg-scrim-color'] === 'rgba(0,0,0,0.25)',
         bodyEl.style._props['--webg-scrim-color']);
-      bodyEl.removeAttribute('data-ds-dark-theme');
+      check('dark theme mirrors body[data-webg-dark]', bodyEl.attributes['data-webg-dark'] === '');
+      emitTheme(false);
       scrimSlider.props.onChange({ target: { value: '25', style: { setProperty() {} } } });
       check('veil returns to white in light theme',
         bodyEl.style._props['--webg-scrim-color'] === 'rgba(255,255,255,0.25)');
+      check('light theme clears the dark mirror', bodyEl.attributes['data-webg-dark'] === undefined);
 
       // Blur>0 complement of the fast path: the filter pipeline engages and
       // the noise overlay comes back with its formula-driven opacity.
@@ -711,7 +734,7 @@ setTimeout(async () => {
       if (liveVideo && liveVideo._listeners && liveVideo._listeners.loadeddata) {
         const white = new Uint8Array(16 * 16 * 4).fill(255);
         const black = new Uint8Array(16 * 16 * 4); // zeros
-        bodyEl.setAttribute('data-ds-dark-theme', '');
+        emitTheme(true);
         mockCanvasPixels = white;
         liveVideo._listeners.loadeddata();
         check('bright frame raises the dark-theme veil floor to 0.5',
@@ -722,7 +745,7 @@ setTimeout(async () => {
         check('dark frame needs no floor (user scrim stands)',
           bodyEl.style._props['--webg-scrim-color'] === 'rgba(0,0,0,0.25)',
           bodyEl.style._props['--webg-scrim-color']);
-        bodyEl.removeAttribute('data-ds-dark-theme');
+        emitTheme(false);
         liveVideo._listeners.loadeddata();
         check('dark frame in LIGHT theme raises the white veil to 0.5',
           bodyEl.style._props['--webg-scrim-color'] === 'rgba(255,255,255,0.5)',
@@ -841,19 +864,19 @@ setTimeout(async () => {
           Boolean(probe) && /\/preview\//.test(String(probe.src || '')),
           String(probe && probe.src));
         if (probe && probe._listeners && probe._listeners.load) {
-          bodyEl.removeAttribute('data-ds-dark-theme');
+          emitTheme(false);
           mockCanvasPixels = new Uint8Array(16 * 16 * 4); // black preview
           probe._listeners.load();
           check('black preview raises the light-theme veil to 0.5',
             bodyEl.style._props['--webg-scrim-color'] === 'rgba(255,255,255,0.5)',
             bodyEl.style._props['--webg-scrim-color']);
-          bodyEl.setAttribute('data-ds-dark-theme', '');
+          emitTheme(true);
           mockCanvasPixels = new Uint8Array(16 * 16 * 4).fill(255); // bright preview
           probe._listeners.load();
           check('bright preview raises the dark-theme veil to 0.5',
             bodyEl.style._props['--webg-scrim-color'] === 'rgba(0,0,0,0.5)',
             bodyEl.style._props['--webg-scrim-color']);
-          bodyEl.removeAttribute('data-ds-dark-theme');
+          emitTheme(false);
           mockCanvasPixels = null;
         }
       }
@@ -894,6 +917,7 @@ setTimeout(async () => {
   check('all layers removed on dispose', documentMock.querySelectorAll('.webg-layer').length === 0);
   check('scrim removed on dispose', !documentMock.getElementById('wallpaper-engine-dsh-scrim'));
   check('body attribute removed on dispose', bodyEl.attributes['data-webg-wallpaper'] === undefined);
+  check('dark-theme mirror removed on dispose', bodyEl.attributes['data-webg-dark'] === undefined);
   check('css vars cleared on dispose', Object.keys(bodyEl.style._props).length === 0);
   check('rotation timer cleared on dispose', !pendingRotation || pendingRotation.cleared);
   check('crossfade/clear leave timers cleared on dispose',
@@ -903,7 +927,9 @@ setTimeout(async () => {
   // ── Re-apply after dispose (plugin update WITHOUT page reload) ─────────
   // The module is NOT re-evaluated on update: the old fiber's cleanup set
   // `disposed = true`, and the new fiber's loadInventory must still commit.
-  // Regression guard for the 1.0.0 blank-picker bug.
+  // Regression guard for the 1.0.0 blank-picker bug. ctx2 intentionally
+  // carries NO theme service — the client must tolerate a host without one
+  // (falls back to prefers-color-scheme / last known state).
   const cleanups2 = [];
   const pickerRenders2 = [];
   const ctx2 = {

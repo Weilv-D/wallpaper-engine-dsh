@@ -39,6 +39,11 @@ const React = require("react");
 const SETTINGS_KEY = "wallpaper-engine-dsh:selection";
 const INVENTORY_URL = "/we-background/inventory";
 const ACTIVE_ATTR = "data-webg-wallpaper";
+// Plugin-owned dark-theme signal for CSS. The shell's old dark-mode body
+// attribute is gone in DSH >= 0.2.1-rc.5; the client now derives dark from
+// the shell's theme service and mirrors it here, so the stylesheet never
+// keys off host DOM internals.
+const DARK_ATTR = "data-webg-dark";
 const LAYER_ID = "wallpaper-engine-dsh-layer";
 const SCRIM_ID = "wallpaper-engine-dsh-scrim";
 const STYLE_TAG_ID = "wallpaper-engine-dsh/styles";
@@ -1122,6 +1127,9 @@ let sampleCanvas = null;
 // tick would rewrite all CSS variables AND force a synchronous layout for
 // nothing. clearEffects() resets it so the next apply always writes.
 let lastEffectKey = null;
+// Resolved dark-theme state, driven by the shell theme service (or the OS
+// prefers-color-scheme fallback). Mirrored onto body[DARK_ATTR] for CSS.
+let themeDark = false;
 
 /** Average Rec.601 luminance (0..1) of a drawable media frame, or null. */
 function luminanceOf(media) {
@@ -1192,7 +1200,16 @@ function applyEffects() {
   // The veil OPPOSES the text colour: dark theme (light text) darkens bright
   // wallpapers, light theme (dark text) brightens dark ones — either way the
   // text side wins. This is what makes ANY wallpaper survivable.
-  const dark = Boolean(document.body.hasAttribute && document.body.hasAttribute("data-ds-dark-theme"));
+  const dark = themeDark;
+  if (typeof document !== "undefined" && document.body) {
+    if (dark) {
+      if (!(document.body.hasAttribute && document.body.hasAttribute(DARK_ATTR))) {
+        document.body.setAttribute(DARK_ATTR, "");
+      }
+    } else if (document.body.hasAttribute && document.body.hasAttribute(DARK_ATTR)) {
+      document.body.removeAttribute(DARK_ATTR);
+    }
+  }
   const roundedLum = sampledLuminance !== null ? Math.round(sampledLuminance * 100) / 100 : null;
   const key = [
     dark, selection.scrim, selection.border, selection.blur, selection.wallpaperBlur,
@@ -1940,7 +1957,7 @@ const CSS = `
 
   /* Light-scheme text ramp: grays were tuned against a near-white page and
      lose contrast over busy wallpapers — push them darker while active. */
-  body[${ACTIVE_ATTR}]:not([data-ds-dark-theme]) {
+  body[${ACTIVE_ATTR}]:not([${DARK_ATTR}]) {
     --dsw-alias-label-primary: rgb(0, 0, 0);
     --dsw-alias-label-primary-dimmed: rgb(10, 10, 12);
     --dsw-alias-label-secondary: rgb(40, 42, 46);
@@ -1958,7 +1975,7 @@ const CSS = `
     --dsw-specific-input-major: rgba(255, 255, 255, 0.15);
     --dsw-specific-bubble: rgba(255, 255, 255, 0.12);
   }
-  body[data-ds-dark-theme][${ACTIVE_ATTR}] {
+  body[${DARK_ATTR}][${ACTIVE_ATTR}] {
     --dsw-specific-input-major: rgba(255, 255, 255, 0.06);
     --dsw-specific-bubble: rgba(255, 255, 255, 0.05);
   }
@@ -2199,7 +2216,10 @@ const CSS = `
 `;
 
 // ── Plugin exports ──────────────────────────────────────────────────────────
-const inject = ["slots"];
+// The client runner (dsh-cordis-client-runner) rejects ctx.get() of any
+// service this plugin does not declare. slots registers the settings row,
+// locale drives the bilingual UI, theme drives the veil/scheme reactions.
+const inject = ["slots", "locale", "theme"];
 
 function apply(ctx) {
   // A plugin UPDATE re-applies this module WITHOUT re-evaluating it: the old
@@ -2225,6 +2245,42 @@ function apply(ctx) {
         if (next !== shellLang) { shellLang = next; emit(); }
       });
     } catch { /* event bus unavailable → static language */ }
+  }
+
+  // 0b. Theme: follow the shell's theme service (snapshot.active.colorScheme
+  //     is "light"|"dark"; "theme/change" emits the new snapshot). Without
+  //     the service, fall back to the OS prefers-color-scheme media query.
+  //     A flip re-runs applyEffects() so the veil colour (black ↔ white) and
+  //     the DARK_ATTR mirror follow immediately.
+  const themeSvc = typeof ctx.get === "function" ? ctx.get("theme") : undefined;
+  if (themeSvc && typeof themeSvc.getTheme === "function") {
+    try {
+      const snap = themeSvc.getTheme();
+      themeDark = Boolean(snap && snap.active && snap.active.colorScheme === "dark");
+    } catch { /* keep previous state */ }
+    if (typeof ctx.on === "function") {
+      try {
+        ctx.on("theme/change", (snap) => {
+          const next = Boolean(snap && snap.active && snap.active.colorScheme === "dark");
+          if (next !== themeDark) { themeDark = next; applyEffects(); }
+        });
+      } catch { /* event bus unavailable → static theme */ }
+    }
+  } else if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+    try {
+      const mq = window.matchMedia("(prefers-color-scheme: dark)");
+      themeDark = Boolean(mq && mq.matches);
+      if (typeof mq.addEventListener === "function") {
+        const onScheme = (e) => {
+          const next = Boolean(e && e.matches);
+          if (next !== themeDark) { themeDark = next; applyEffects(); }
+        };
+        mq.addEventListener("change", onScheme);
+        if (typeof ctx.effect === "function") {
+          ctx.effect(() => () => mq.removeEventListener("change", onScheme));
+        }
+      }
+    } catch { /* no matchMedia → light default */ }
   }
 
   // 1. Styles: owned by the fiber — injected on apply, REMOVED on dispose.
@@ -2259,12 +2315,6 @@ function apply(ctx) {
           applyEffects();
         }, 2500);
       }
-      // A theme switch flips the veil colour immediately (black ↔ white).
-      let observer = null;
-      if (typeof MutationObserver === "function") {
-        observer = new MutationObserver(() => applyEffects());
-        observer.observe(document.body, { attributes: true, attributeFilter: ["data-ds-dark-theme"] });
-      }
       return () => {
         // Stop any in-flight inventory fetch from committing state (and
         // re-arming the rotation timer) after teardown began.
@@ -2275,7 +2325,6 @@ function apply(ctx) {
         // removes the bar and its listeners) before tearing layers down.
         exitAdjust();
         if (samplerId !== null) window.clearInterval(samplerId);
-        if (observer) observer.disconnect();
         sampledLuminance = null;
         if (previewProbe) { previewProbe.remove(); previewProbe = null; }
         clearRotationTimer();
@@ -2294,6 +2343,7 @@ function apply(ctx) {
         if (scrim) scrim.remove();
         clearEffects();
         document.body.removeAttribute(ACTIVE_ATTR);
+        document.body.removeAttribute(DARK_ATTR);
       };
     });
   }

@@ -53,7 +53,7 @@
     },
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-client-runtime"
+        "@deepseek-ai/dsh-client-ui-settings-general"
       ],
       "platform": "web",
       "immediately": true
@@ -71,23 +71,28 @@
     "release:major": "npm version major -m \"chore: release v%s\" && git push --follow-tags"
   },
   "engines": {
+    "dsh": ">=0.2.1-rc.5",
     "node": ">=18.17"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-client-runtime": ">=0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-ui-slots": ">=0.1.0-rc.6",
-    "@deepseek-ai/dsh-host-webserver": ">=0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-locale": ">=0.2.1-rc.5",
+    "@deepseek-ai/dsh-client-ui-settings-general": ">=0.2.1-rc.5",
+    "@deepseek-ai/dsh-client-ui-theme": ">=0.2.1-rc.5",
+    "@deepseek-ai/dsh-host-webserver": ">=0.2.1-rc.5",
     "react": "^18.2.0"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": {
       "optional": true
     },
-    "@deepseek-ai/dsh-client-runtime": {
+    "@deepseek-ai/dsh-client-locale": {
       "optional": true
     },
-    "@deepseek-ai/dsh-client-ui-slots": {
+    "@deepseek-ai/dsh-client-ui-settings-general": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-client-ui-theme": {
       "optional": true
     },
     "@deepseek-ai/dsh-host-webserver": {
