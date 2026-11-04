@@ -925,10 +925,10 @@ setTimeout(async () => {
     check('language selector present', Boolean(langSelect));
     check('default language is Chinese (刷新 button)', buttons.some((b) =>
       Array.isArray(b.children) && b.children.includes('刷新')));
-    check('settings row label is Chinese',
+    check('settings section nav label is the short Chinese name',
       registrations.some((r) => {
         const text = typeof r.label === 'function' ? r.label() : r.label;
-        return text === '壁纸背景 (Wallpaper Engine)';
+        return text === '壁纸背景';
       }),
       JSON.stringify(registrations.map((r) => typeof r.label === 'function' ? r.label() : r.label)));
     if (langSelect) {

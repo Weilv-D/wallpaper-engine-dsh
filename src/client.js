@@ -66,6 +66,7 @@ const REDUCED_MOTION = typeof window !== "undefined" &&
 const STRINGS = {
   zh: {
     settingsLabel: "壁纸背景 (Wallpaper Engine)",
+    navLabel: "壁纸背景",
     scanning: "正在扫描 Wallpaper Engine…",
     connError: "未能连接 Wallpaper Engine:",
     retry: "重试",
@@ -151,6 +152,7 @@ const STRINGS = {
   },
   en: {
     settingsLabel: "Wallpaper Engine",
+    navLabel: "Wallpaper",
     scanning: "Scanning Wallpaper Engine…",
     connError: "Could not reach Wallpaper Engine: ",
     retry: "Retry",
@@ -1898,6 +1900,7 @@ function WallpaperPicker() {
   const editing = sel.editing;
 
   return React.createElement("div", { className: "webg-picker" },
+    React.createElement("h2", { className: "webg-heading" }, t.settingsLabel),
     SearchRow(t, sel, query, setQuery, filteredList.length, usableList.length),
     WallpaperGrid(t, sel, usableList, filteredList, q),
     ActionRow(t, sel),
@@ -2138,6 +2141,10 @@ const CSS = `
      search/language row breathes; gap keeps every row evenly spaced.
      Type scale follows the shell: 14px body → 13px controls → 12px hints. */
   .webg-picker { display: flex; flex-direction: column; gap: 12px; padding-top: 10px; max-width: 900px; }
+  /* Page heading mirrors the shell's own section headings (18px/600, no
+     margins) — the sidebar label is the short nav name, this carries the
+     full product name. */
+  .webg-heading { margin: 0; font-size: 18px; font-weight: 600; color: var(--dsw-alias-label-primary, inherit); }
   .webg-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .webg-hint { font-size: 12px; opacity: 0.7; color: var(--dsw-alias-label-tertiary, inherit); }
   .webg-error {
@@ -2564,6 +2571,35 @@ function apply(ctx) {
     });
   }
 
+  // Nav icon: the settings sidebar hardcodes icons by section id
+  // (account/models/plugins/...) and falls back to a gear for every
+  // plugin-registered section; nav rows expose no per-row hook (no
+  // data-id, class names are module-suffixed), so the icon is swapped
+  // in place: watch for nav rows whose label text is ours and replace
+  // the default gear SVG with the plugin wallpaper glyph. The gear's
+  // class attribute is copied so the shell's sizing styles still apply,
+  // and a dataset guard keeps the swap idempotent across re-renders.
+  const NAV_ICON_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">' +
+    '<rect x="2" y="2" width="12" height="12" rx="2"/>' +
+    '<circle cx="5.8" cy="5.8" r="1.1"/>' +
+    '<path d="M14 10l-3.33-3.33L3.33 14"/></svg>';
+  const styleNavIcon = () => {
+    if (typeof document.querySelectorAll !== "function") return;
+    for (const row of document.querySelectorAll('button[class*="navCell"]')) {
+      if (row.dataset && row.dataset.webgNavIcon) continue;
+      if (row.textContent !== S().navLabel) continue;
+      const gear = row.querySelector("svg");
+      if (!gear) continue;
+      row.dataset.webgNavIcon = "1";
+      const tpl = document.createElement("span");
+      tpl.innerHTML = NAV_ICON_SVG;
+      const svg = tpl.firstChild;
+      const cls = gear.getAttribute && gear.getAttribute("class");
+      if (cls) svg.setAttribute("class", cls);
+      gear.replaceWith(svg);
+    }
+  };
   // 4. Own settings section — NOT a row inside General. The settings dialog
   //    enumerates every registered settings.section slot for its nav
   //    (settings-general and settings-plugins register theirs the same way),
@@ -2572,10 +2608,23 @@ function apply(ctx) {
   if (ctx.slots) {
     ctx.slots.inject("settings.section", () =>
       ctx.slots.register(
-        { name: "settings.section", id: "we-background", order: 20, label: () => S().settingsLabel },
+        { name: "settings.section", id: "we-background", order: 20, label: () => S().navLabel },
         () => React.createElement(WallpaperPicker),
       ),
     );
+  }
+
+  // 4b. Drive the nav icon swap (defined above): the settings dialog mounts
+  //     its nav only while open, so the observer just sweeps on mutation
+  //     batches and early-exits when no nav rows exist. Disposed with the
+  //     plugin fiber.
+  if (ctx.effect && typeof MutationObserver === "function" && typeof document !== "undefined") {
+    ctx.effect(() => {
+      const mo = new MutationObserver(styleNavIcon);
+      mo.observe(document.body, { childList: true, subtree: true });
+      styleNavIcon();
+      return () => mo.disconnect();
+    });
   }
 
   loadInventory(false);

@@ -35,7 +35,7 @@ git clone https://github.com/Weilv-D/wallpaper-engine-dsh.git
 dsh plugin --profile web add link:<absolute path to the cloned folder>
 ```
 
-Restart `dsh web`, then open **Settings → Wallpaper Engine**.
+Restart `dsh web`, open **Settings** from the sidebar, and pick **Wallpaper**.
 
 ## Usage
 

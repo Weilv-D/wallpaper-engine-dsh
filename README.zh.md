@@ -35,7 +35,7 @@ git clone https://github.com/Weilv-D/wallpaper-engine-dsh.git
 dsh plugin --profile web add link:<克隆文件夹的绝对路径>
 ```
 
-重启 `dsh web`,打开 **设置 → 壁纸背景 (Wallpaper Engine)**。
+重启 `dsh web`,在左侧会话列表点「设置」,侧栏选 **壁纸背景**。
 
 ## 使用
 
