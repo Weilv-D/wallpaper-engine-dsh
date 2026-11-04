@@ -39,10 +39,11 @@ const React = require("react");
 const SETTINGS_KEY = "wallpaper-engine-dsh:selection";
 const INVENTORY_URL = "/we-background/inventory";
 const ACTIVE_ATTR = "data-webg-wallpaper";
-// Plugin-owned dark-theme signal for CSS. The shell's old dark-mode body
-// attribute is gone in DSH >= 0.2.1-rc.5; the client now derives dark from
-// the shell's theme service and mirrors it here, so the stylesheet never
-// keys off host DOM internals.
+// Plugin-owned dark-theme signal for CSS. The shell's own dark-mode body
+// attribute still exists in 0.2.1-rc.5 (its writer moved to the layout
+// theme presenter), but the stylesheet never keys off host DOM internals:
+// the client derives dark from the shell's theme service and mirrors it
+// here, so a host-side restructure can never silently break the glass.
 const DARK_ATTR = "data-webg-dark";
 const LAYER_ID = "wallpaper-engine-dsh-layer";
 const SCRIM_ID = "wallpaper-engine-dsh-scrim";
@@ -1232,9 +1233,22 @@ function applyEffects() {
   s.setProperty("--webg-scrim-color", veilColor);
   s.setProperty("--webg-border-alpha", String(selection.border));
   s.setProperty("--webg-blur", selection.blur + "px");
-  // The glass "colour melt" scales with blur radius: 0 blur → no melt.
-  s.setProperty("--webg-saturate", String(1.15 + selection.blur * 0.028));
+  // The glass "colour melt" anchors at the shell's own menu material: the
+  // slider's 40px ceiling reproduces the host recipe blur(40px) saturate(150%)
+  // exactly, so full glass and the host's frosted chrome read as one system.
+  s.setProperty("--webg-saturate", String(1 + selection.blur * 0.0125));
   s.setProperty("--webg-glass-brightness", "1.04");
+  // Modal masks (settings dialog, image lightbox) read the shell's mask-blur
+  // token — wire it to the glass slider so modals frost the app behind them
+  // instead of showing the wallpaper sharply through a translucent mask.
+  // Capped: a 40px blur on a full-viewport backdrop costs more GPU than the
+  // effect is worth.
+  // Gated on an active selection: this is a HOST token, so masks must not
+  // blur the app while no wallpaper runs. At 0 blur: none - no layer, no cost.
+  s.setProperty("--dsw-mask-blur",
+    selection.id && selection.blur > 0
+      ? "blur(" + Math.min(selection.blur, 20) + "px)"
+      : "none");
   // At 0 blur, keep the media OUT of the filter pipeline entirely: even
   // blur(0px) forces an extra raster/compositing pass, and the noise overlay
   // would still occupy a layer at opacity 0. filter:none + display:none keep
@@ -1272,6 +1286,7 @@ function clearEffects() {
   s.removeProperty("--webg-scrim-color");
   s.removeProperty("--webg-border-alpha");
   s.removeProperty("--webg-blur");
+  s.removeProperty("--dsw-mask-blur"); // restore the host's own mask token
   s.removeProperty("--webg-saturate");
   s.removeProperty("--webg-glass-brightness");
   s.removeProperty("--webg-media-filter");
@@ -1981,14 +1996,91 @@ const CSS = `
   }
   body[${ACTIVE_ATTR}] [data-composer-card],
   body[${ACTIVE_ATTR}] [class*="_bubble"] {
-    background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.05) 38%, rgba(255, 255, 255, 0.02));
-    -webkit-backdrop-filter: blur(var(--webg-blur, 16px)) saturate(var(--webg-saturate, 1.8)) brightness(var(--webg-glass-brightness, 1.04)) contrast(1.01);
-    backdrop-filter: blur(var(--webg-blur, 16px)) saturate(var(--webg-saturate, 1.8)) brightness(var(--webg-glass-brightness, 1.04)) contrast(1.01);
+    background-image: linear-gradient(165deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.06) 32%, rgba(255, 255, 255, 0.02));
+    -webkit-backdrop-filter: blur(var(--webg-blur, 16px)) saturate(var(--webg-saturate, 1.2)) brightness(var(--webg-glass-brightness, 1.04)) contrast(1.01);
+    backdrop-filter: blur(var(--webg-blur, 16px)) saturate(var(--webg-saturate, 1.2)) brightness(var(--webg-glass-brightness, 1.04)) contrast(1.01);
     box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.32),
-      inset 0 -1px 0 rgba(255, 255, 255, 0.08),
-      inset 0 0 0 0.5px rgba(255, 255, 255, 0.08),
-      0 12px 40px rgba(0, 0, 0, 0.12);
+      inset 0 1px 0 rgba(255, 255, 255, 0.36),
+      inset 0 -1px 0 rgba(255, 255, 255, 0.10),
+      inset 0 0 0 0.5px rgba(255, 255, 255, 0.10),
+      0 12px 40px rgba(0, 0, 0, 0.14);
+  }
+
+  /* Menu + queue-dock surface repair (wallpaper active). The shell's
+     menu primitive parks fill and blur on a child layer while the
+     surface element itself is isolated - an isolated ancestor forms
+     a backdrop root, so the blur only samples the panel interior.
+     Same on the queue dock panel (:before carries the blur). With a
+     wallpaper active, menus showed sharp content through a 45% fill.
+     An element's OWN backdrop-filter ignores its own isolation, so
+     the filter moves onto the surface element; fill deepened 72%. */
+  body[${ACTIVE_ATTR}] { --dsw-menu-surface-fill: rgba(67, 69, 74, 0.72); }
+  body[${ACTIVE_ATTR}]:not([${DARK_ATTR}]) { --dsw-menu-surface-fill: rgba(248, 249, 250, 0.72); }
+  body[${ACTIVE_ATTR}] [data-menu-material],
+  body[${ACTIVE_ATTR}] [data-composer-dock] [class*="_panel"] {
+    -webkit-backdrop-filter: blur(var(--webg-blur, 16px)) saturate(var(--webg-saturate, 1.2)) brightness(var(--webg-glass-brightness, 1.04)) contrast(1.01);
+    backdrop-filter: blur(var(--webg-blur, 16px)) saturate(var(--webg-saturate, 1.2)) brightness(var(--webg-glass-brightness, 1.04)) contrast(1.01);
+  }
+
+  /* Settings modal and sibling dialogs: the shell paints dialogs on
+     an opaque layer-2 panel. While a wallpaper is active, dialogs
+     join the glass system - the mask behind them already frosts the
+     app (the mask blur token is wired to the glass slider in
+     applyEffects). color-mix keeps the host hue at 80% opacity.
+     [class*="_dialog_"] matches only the module-suffix panel class;
+     compounds like _dialogHeader lack the underscore segment. */
+  body[${ACTIVE_ATTR}] [class*="_dialog_"] {
+    background-color: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 80%, transparent);
+    -webkit-backdrop-filter: blur(var(--webg-blur, 16px)) saturate(var(--webg-saturate, 1.2)) brightness(var(--webg-glass-brightness, 1.04)) contrast(1.01);
+    backdrop-filter: blur(var(--webg-blur, 16px)) saturate(var(--webg-saturate, 1.2)) brightness(var(--webg-glass-brightness, 1.04)) contrast(1.01);
+  }
+
+  /* Windows desktop: the window-controls strip is an opaque host
+     overlay (titleBarOverlay colour, fed from the renderer-measured
+     palette). Blend the wallpaper up into it with a short fade from
+     the overlay's own colour (dark #1b1b1c / light #f9fafb), scoped
+     to the desktop marker html[data-windows-titlebar] (absent in
+     browsers) and off in fullscreen. Pure CSS: the fill var flips
+     with the plugin dark mirror attribute, no JS involved. */
+  body[${DARK_ATTR}] { --webg-titlebar-fill: #1b1b1c; }
+  body:not([${DARK_ATTR}]) { --webg-titlebar-fill: #f9fafb; }
+  html[data-windows-titlebar]:not([data-fullscreen]) body[${ACTIVE_ATTR}] .webg-scrim::before {
+    content: ""; position: absolute; top: 0; left: 0; right: 0;
+    height: var(--dsh-windows-titlebar-height, 40px);
+    background: linear-gradient(var(--webg-titlebar-fill, #1b1b1c), transparent);
+  }
+
+  /* Accessibility: prefers-reduced-transparency (Windows transparency
+     effects off, macOS Reduce transparency). Glass off, surfaces back
+     to solid fills; the wallpaper stays, legibility carried by the
+     veil and the solids. Selectors mirror the glass rules above so
+     this block wins by document order. */
+  @media (prefers-reduced-transparency: reduce) {
+    body[${ACTIVE_ATTR}] {
+      --dsw-specific-input-major: #26272c;
+      --dsw-specific-bubble: #26272c;
+      --dsw-menu-surface-fill: #43454a;
+      --dsw-mask-blur: none !important;
+    }
+    body[${ACTIVE_ATTR}]:not([${DARK_ATTR}]) {
+      --dsw-specific-input-major: #f8f9fa;
+      --dsw-specific-bubble: #f4f5f6;
+      --dsw-menu-surface-fill: #f8f9fa;
+      --dsw-mask-blur: none !important;
+    }
+    body[${ACTIVE_ATTR}] [data-composer-card],
+    body[${ACTIVE_ATTR}] [class*="_bubble"],
+    body[${ACTIVE_ATTR}] [data-menu-material],
+    body[${ACTIVE_ATTR}] [data-composer-dock] [class*="_panel"],
+    body[${ACTIVE_ATTR}] [class*="_dialog_"] {
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+      background-image: none;
+      box-shadow: var(--dsw-elevation-soft, 0 3px 8px rgba(0, 0, 0, 0.08));
+    }
+    body[${ACTIVE_ATTR}] [class*="_dialog_"] {
+      background-color: var(--dsw-alias-bg-layer-2);
+    }
   }
 
   /* ── Picker chrome (token-driven, theme-aware) ── */
