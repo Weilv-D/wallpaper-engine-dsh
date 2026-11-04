@@ -2,7 +2,7 @@
 
 [English](README.md) | [中文](README.zh.md)
 
-A DSH bundle that turns your local **Wallpaper Engine** library into the live background of the DSH web GUI (`dsh web`). Video wallpapers play behind the chat, web wallpapers render in place, and everything in between — crossfade transitions, liquid-glass panels, a legibility veil that adapts to any wallpaper, manual framing, rotation lists, search, and a bilingual UI — is controlled from a single settings row.
+A DSH bundle that turns your local **Wallpaper Engine** library into the live background of the DSH web GUI (`dsh web`). Video wallpapers play behind the chat, web wallpapers render in place, and everything in between — crossfade transitions, liquid-glass panels, a legibility veil that adapts to any wallpaper, manual framing, rotation lists, search, and a bilingual UI — is controlled from its own dedicated settings section.
 
 ## Features
 
@@ -35,7 +35,7 @@ git clone https://github.com/Weilv-D/wallpaper-engine-dsh.git
 dsh plugin --profile web add link:<absolute path to the cloned folder>
 ```
 
-Restart `dsh web`, then open **Settings → General → Wallpaper Engine**.
+Restart `dsh web`, then open **Settings → Wallpaper Engine**.
 
 ## Usage
 

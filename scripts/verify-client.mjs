@@ -5,7 +5,7 @@
  * contract, drives apply() with a mock slots/effect context, and asserts the
  * behavioural contract end to end:
  *   - module envelope (id, exports, Symbol.toStringTag)
- *   - settings.general.item slot registration
+ *   - settings.section slot registration (own dedicated section)
  *   - style tag lifecycle (injected on apply, REMOVED on dispose)
  *   - wallpaper + scrim layers under <body>, body attribute, CSS variables
  *   - web wallpapers get a sandboxed iframe (allow-scripts only)
@@ -283,8 +283,8 @@ const emitTheme = (dark) => {
 let thrown = null;
 try { exportsObj.apply(ctx); } catch (e) { thrown = e && e.stack || e; }
 check('apply() does not throw', !thrown, thrown);
-check('registers settings.general.item row',
-  registrations.some((r) => r.key === 'settings.general.item' && r.id === 'we-background'),
+check('registers its own settings.section (not a row inside General)',
+  registrations.some((r) => r.key === 'settings.section' && r.id === 'we-background'),
   JSON.stringify(registrations));
 check('style tag injected on apply', headEl.children.some((n) => n.tagName === 'STYLE'));
 // The shell's brand-primary-invert aliases brand-primary itself (no
