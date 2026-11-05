@@ -2,6 +2,8 @@
 
 [English](README.md) | [中文](README.zh.md)
 
+[![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
+
 一个 DSH bundle:把本机 **Wallpaper Engine** 壁纸库变成 DSH web GUI(`dsh web`)的动态背景。视频壁纸在聊天界面背后播放,网页壁纸直接渲染。交叉淡入、液态玻璃面板、随壁纸自适应的可读性遮罩、手动取景、轮播列表、搜索与中英双语界面,集中在一个专门的设置分区里。
 
 ## 功能
