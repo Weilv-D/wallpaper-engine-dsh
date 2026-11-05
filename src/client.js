@@ -447,6 +447,16 @@ async function loadInventory(forceRefresh) {
       installDir: null, wallpapers: [], total: 0, portableCount: 0, playlists: [],
       error: String(err && err.message ? err.message : err),
     };
+    // Transient fetch failures are NON-DESTRUCTIVE: the selection, rotation
+    // switches and the playing layer survive the outage untouched, so 重试
+    // simply resumes. The inventory-derived bookkeeping below must NOT run
+    // here — an empty inventory misreads every rotation group as empty,
+    // which would burn the one-time playlist seed, silently disable
+    // rotation, and wipe the persisted selection.
+    selection.loading = false;
+    selection.loaded = true;
+    emit();
+    return;
   }
   if (disposed || epoch !== inventoryEpoch) return;
   selection.loading = false;
@@ -712,6 +722,11 @@ const mediaFailures = new Map(); // wallpaperId → consecutive failure count
 const demotedToPreview = new Set(); // wallpaperIds now rendered as stills
 
 function buildMedia(sel) {
+  // Snapshot the wallpaper identity at MOUNT time. The error / zero-frame
+  // handlers below close over the LIVE selection store, so a late error
+  // from a crossfade-leaving element would otherwise be attributed to
+  // whatever wallpaper happens to be selected when the event fires.
+  const snap = { id: sel.id, type: sel.type };
   let media;
   if (sel.type === "video") {
     media = document.createElement("video");
@@ -743,8 +758,8 @@ function buildMedia(sel) {
     media.setAttribute("decoding", "async");
     media.className = "webg-media";
   }
-  attachStillSampling(media, sel);
-  attachMediaError(media, sel);
+  attachStillSampling(media, snap);
+  attachMediaError(media, snap);
   return media;
 }
 
@@ -761,6 +776,11 @@ function attachStillSampling(media, sel) {
 }
 
 function handleMediaFailure(sel) {
+  // Stale guard: an error from a crossfade-leaving element of a wallpaper we
+  // already switched away from must not touch the CURRENT selection's failure
+  // ladder — it would inflate its count and can wrongly demote or clear the
+  // wallpaper that is showing now.
+  if (!sel || sel.id !== selection.id) return;
   const id = sel.id;
   const count = (mediaFailures.get(id) || 0) + 1;
   mediaFailures.set(id, count);
@@ -1857,8 +1877,10 @@ function MonitorRow(t, sel) {
 function StatusRow(t, sel, group, usableCount, usableTotal) {
   // "Auto-rotating" is claimed only when the timer is genuinely armed —
   // rotation may be enabled on a list with fewer than 2 usable wallpapers,
-  // in which case nothing switches until the list grows.
-  const rotating = sel.rotationEnabled && usableCount >= 2;
+  // in which case nothing switches until the list grows. A cleared
+  // selection (id "") disarms the timer too: claiming rotation there would
+  // report a tick that will never come.
+  const rotating = sel.rotationEnabled && usableCount >= 2 && Boolean(sel.id);
   return React.createElement("div", { className: "webg-row" },
     React.createElement("span", { className: "webg-hint" },
       (group

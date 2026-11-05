@@ -18,6 +18,11 @@
  *     completes) instead of tearing everything down instantly
  *   - rotation timer advances and wraps within the user-defined group
  *   - 刷新 calls /we-background/inventory?refresh=1
+ *   - stale media errors from crossfade-leaving elements are ignored (the
+ *     failure ladder keys off the mount-time id, not the live selection)
+ *   - a cleared selection stops the "auto-rotating" status claim
+ *   - transient inventory outages are non-destructive (selection, rotation
+ *     and the playing layer survive; 重试 recovers in place)
  *   - dispose tears down every layer, the scrim, timers, monitors and effects
  *
  * Exits non-zero when any assertion fails (CI-friendly).
@@ -176,9 +181,11 @@ const localStorageMock = {
 // it re-mints tokens on each inventory rebuild), so the test can prove the
 // client does not reload the playing wallpaper just because URLs changed.
 let fetchCount = 0;
+let failFetch = false; // transient-outage test: flip before, clear after
 const fetchCalls = [];
 const fetchMock = (url) => {
   fetchCalls.push(String(url));
+  if (failFetch) return Promise.reject(new Error('simulated outage'));
   const n = ++fetchCount;
   return Promise.resolve({
     ok: true, status: 200,
@@ -754,6 +761,43 @@ setTimeout(async () => {
       }
     }
 
+    // ── Stale media errors must not touch the CURRENT selection's ladder ──
+    // A crossfade-leaving element of an already-switched-away wallpaper can
+    // fire error while the NEW wallpaper mounts. Handlers snapshot the id at
+    // mount and the ladder ignores non-current ids: no forced refresh, no
+    // count inflation, selection intact.
+    {
+      const webCardEarly = cardByTitle(collectButtons(pickerRenders[0]()), 'Web B');
+      check('web card available for the stale-error test', Boolean(webCardEarly));
+      if (webCardEarly) {
+        webCardEarly.props.onClick(); // 'a' (video) → 'b' (web): the old video leaves
+        const leavingVideo = documentMock.querySelectorAll('.webg-layer')
+          .map((l) => l.querySelector('video')).find(Boolean);
+        check('old video layer still mounted mid-crossfade', Boolean(leavingVideo));
+        const fetchesBefore = fetchCalls.length;
+        if (leavingVideo && leavingVideo._listeners && leavingVideo._listeners.error) {
+          leavingVideo._listeners.error();
+        }
+        check('stale error does not trigger a recovery refresh',
+          fetchCalls.length === fetchesBefore, String(fetchCalls.length - fetchesBefore));
+        check('stale error keeps the newly selected wallpaper',
+          JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']).id === 'b');
+        const liveLayer = documentMock.getElementById('wallpaper-engine-dsh-layer');
+        check('stale error keeps the iframe layer intact',
+          Boolean(liveLayer && liveLayer.children[0] && liveLayer.children[0].tagName === 'IFRAME'));
+        // Settle the crossfade, then switch back so later blocks start clean.
+        let staleSettle = [...timers].reverse().find((t) => !t.cleared && !t.fired && t.ms < 1000);
+        if (staleSettle) staleSettle.fn();
+        const videoCardBack = cardByTitle(collectButtons(pickerRenders[0]()), 'Video A');
+        check('video card available to switch back', Boolean(videoCardBack));
+        if (videoCardBack) {
+          videoCardBack.props.onClick();
+          staleSettle = [...timers].reverse().find((t) => !t.cleared && !t.fired && t.ms < 1000);
+          if (staleSettle) staleSettle.fn();
+        }
+      }
+    }
+
     // Smart veil toggle present in the monitor row.
     check('smart veil toggle present', JSON.stringify(tree).includes('智能可视'));
 
@@ -841,6 +885,11 @@ setTimeout(async () => {
       check('clear removes all layers after fade', documentMock.querySelectorAll('.webg-layer').length === 0);
       check('clear removes scrim after fade', !documentMock.getElementById('wallpaper-engine-dsh-scrim'));
       check('clear removes body attribute after fade', bodyEl.attributes['data-webg-wallpaper'] === undefined);
+      // Rotation stays enabled with a ≥2-wallpaper list, but the timer is
+      // disarmed once the selection is cleared — the status row must stop
+      // claiming "auto-rotating" for a tick that will never come.
+      check('cleared wallpaper stops the auto-rotating claim',
+        !JSON.stringify(pickerRenders[0]()).includes('自动轮转中'));
     }
 
     // ── Rotation honesty + the preview-less failure path ──
@@ -917,6 +966,59 @@ setTimeout(async () => {
           mockCanvasPixels = null;
         }
       }
+    }
+
+    // ── Transient inventory outages are NON-DESTRUCTIVE ──
+    // A failed fetch must not wipe the selection, disable rotation, or fade
+    // out the playing layer: the success-path bookkeeping would misread an
+    // empty inventory (burn the one-time playlist seed, disarm rotation,
+    // clear the persisted id). 重试 recovers in place from the same state.
+    {
+      failFetch = true;
+      const outageTree = pickerRenders[0]();
+      const outageRefresh = collectButtons(outageTree).find((b) =>
+        Array.isArray(b.children) && b.children.includes('刷新'));
+      check('refresh button present for the outage test', Boolean(outageRefresh));
+      if (outageRefresh) {
+        const outageLayer = documentMock.getElementById('wallpaper-engine-dsh-layer');
+        const elBefore = outageLayer && outageLayer.children[0];
+        const srcBefore = elBefore && elBefore.src;
+        outageRefresh.props.onClick();
+        await new Promise((r) => setTimeout(r, 20));
+        const errTree = pickerRenders[0]();
+        check('outage surfaces the error UI with the retry button',
+          JSON.stringify(errTree).includes('未能连接 Wallpaper Engine:') &&
+            collectButtons(errTree).some((b) =>
+              Array.isArray(b.children) && b.children.includes('重试')));
+        const outageSel = JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']);
+        check('outage keeps the selection', outageSel.id === 'b');
+        check('outage keeps rotation enabled', outageSel.rotationEnabled === true);
+        check('outage keeps the playing layer mounted',
+          documentMock.querySelectorAll('.webg-layer').length === 1 &&
+            documentMock.getElementById('wallpaper-engine-dsh-layer').children[0].tagName === 'IFRAME');
+        failFetch = false;
+        const retryBtn = collectButtons(errTree).find((b) =>
+          Array.isArray(b.children) && b.children.includes('重试'));
+        check('retry button is wired to the refresh action', Boolean(retryBtn));
+        if (retryBtn) {
+          retryBtn.props.onClick();
+          await new Promise((r) => setTimeout(r, 20));
+          check('retry recovers from the outage',
+            !JSON.stringify(pickerRenders[0]()).includes('未能连接'));
+          check('selection survives the outage and recovery',
+            JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']).id === 'b');
+          const recoveredLayer = documentMock.getElementById('wallpaper-engine-dsh-layer');
+          const recoveredEl = recoveredLayer && recoveredLayer.children[0];
+          check('recovery re-mints the URL and adopts the same element',
+            recoveredEl === elBefore &&
+              /\/media\/tokB-\d+\//.test(String(recoveredEl && recoveredEl.src)) &&
+              String(recoveredEl && recoveredEl.src) !== String(srcBefore),
+            String(recoveredEl && recoveredEl.src));
+          check('no leftover layers after recovery',
+            documentMock.querySelectorAll('.webg-layer').length === 1);
+        }
+      }
+      failFetch = false;
     }
 
     // ── i18n: default UI is Chinese; switching to English re-renders. ──
