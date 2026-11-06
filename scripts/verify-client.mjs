@@ -334,18 +334,13 @@ check('style tag injected on apply', headEl.children.some((n) => n.tagName === '
   // neutral scheme itself.
   check('web wallpaper iframe pins color-scheme: normal against theme leakage',
     styleCss.includes('color-scheme: normal'));
-  // Liquid-glass material inventory: the four Apple cues must all be in the
-  // stylesheet — grain tile, asymmetric edge stack (--webg-edge alphas in
-  // calc), the lens-gated chain var, and both accessibility blocks.
   // Liquid-glass material inventory (v3): the wallpaper-sampled body, the
   // lit-column bevel, the four elevation steps, the per-tier chains and both
-  // accessibility blocks.
+  // accessibility blocks. Grain is pinned ABSENT: retired with the frosted era
+  // - on video wallpaper a static noise tile reads as dirt, and Apple's layer
+  // model has no grain layer.
   check('liquid-glass material blocks present in css',
-    styleCss.includes('--webg-grain:') &&
-      // Apple-subliminal dither, not frosted sand: the grain matrix's alpha
-      // row must stay in the ~3% band (regression lock against 12%).
-      styleCss.includes('0 0 0 0.035 0') &&
-      !styleCss.includes('0 0 0 0.12 0') &&
+    !styleCss.includes('--webg-grain:') &&
       // Body is a wallpaper-derived glass body, not a white wash.
       styleCss.includes('--webg-body: hsl(var(--webg-tint-h)') &&
       styleCss.includes('--webg-bevel:') &&
@@ -404,9 +399,9 @@ check('style tag injected on apply', headEl.children.some((n) => n.tagName === '
     'body/bevel/elevation/tier/lens/contrast/transparency markers');
 
   // Layer-count guard. --webg-glass-layers expands --webg-spec-gloss into FOUR
-  // radials, so the resolved stack is grain + veil + 4 pools + gloss + sheen +
-  // pointer = 9 layers. A sizes/repeats list shorter than the stack cycles
-  // from the start and tiles one specular pool at 140px — the patchy-squares
+  // radials, so the resolved stack is veil + 4 pools + gloss + sheen + pointer
+  // = 8 layers, none of them tiled. A sizes/repeats list shorter than the stack
+  // cycles from the start and tiles one gradient — the patchy-squares
   // regression this check pins down.
   {
     const token = (name) => {
@@ -429,7 +424,7 @@ check('style tag injected on apply', headEl.children.some((n) => n.tagName === '
     const sizes = entries(token("--webg-glass-sizes"));
     const repeats = entries(token("--webg-glass-repeats"));
     check('glass layer lists stay in step with the four specular radials',
-      pools === 4 && sizes === 9 && repeats === 9,
+      pools === 4 && sizes === 8 && repeats === 8,
       pools + ' pools / ' + sizes + ' sizes / ' + repeats + ' repeats');
   }
 }
@@ -482,9 +477,7 @@ setTimeout(async () => {
     /^blur\(\d+px\) saturate\(1\.6\) brightness\([\d.]+\) contrast\(1\)$/.test(props['--webg-chain-t1']) &&
       /^blur\(\d+px\) saturate\(1\.3\) brightness\([\d.]+\) contrast\(0\.9\)$/.test(props['--webg-chain-t3']),
     props['--webg-chain-t1'] + ' | ' + props['--webg-chain-t3']);
-  check('compat lens alias mirrors the T2 chain (lenses are per surface now)',
-    props['--webg-backdrop-lens'] === props['--webg-backdrop'],
-    props['--webg-backdrop-lens']);
+  check('no compat lens alias survives', props['--webg-backdrop-lens'] === undefined, props['--webg-backdrop-lens']);
   check('edge specular strength rides the glass slider (wallpaper-adaptive)',
     props['--webg-rim'] === '0.618' && props['--webg-edge'] === props['--webg-rim'],
     props['--webg-rim'] + ' / ' + props['--webg-edge']);
@@ -890,18 +883,14 @@ setTimeout(async () => {
       check('glass 40 caps the T2 melt at the tier ceiling',
         bodyEl.style._props['--webg-backdrop'] === 'blur(10px) saturate(1.4) brightness(1.04) contrast(0.92)',
         bodyEl.style._props['--webg-backdrop']);
-      check('the compat lens alias stays the tier chain at 40 too',
-        bodyEl.style._props['--webg-backdrop-lens'] === bodyEl.style._props['--webg-backdrop'],
-        bodyEl.style._props['--webg-backdrop-lens']);
       check('edge strength rides the slider, still wallpaper-bound',
         bodyEl.style._props['--webg-rim'] === '0.618' &&
           bodyEl.style._props['--webg-edge'] === bodyEl.style._props['--webg-rim'],
         bodyEl.style._props['--webg-rim']);
       glassSlider.props.onChange({ target: { value: '0', style: { setProperty() {} } } });
       check('glass 0 collapses the chain to none (no filter pipeline)',
-        bodyEl.style._props['--webg-backdrop'] === 'none' &&
-          bodyEl.style._props['--webg-backdrop-lens'] === 'none',
-        bodyEl.style._props['--webg-backdrop'] + ' | ' + bodyEl.style._props['--webg-backdrop-lens']);
+        bodyEl.style._props['--webg-backdrop'] === 'none',
+        bodyEl.style._props['--webg-backdrop']);
       check('lens gate lifts at 0 glass', bodyEl.attributes['data-webg-lens'] === undefined);
       glassSlider.props.onChange({ target: { value: '16', style: { setProperty() {} } } });
       check('lens gate returns with the glass', bodyEl.attributes['data-webg-lens'] === '');
@@ -913,10 +902,36 @@ setTimeout(async () => {
       glassSlider.props.onChange({ target: { value: '24', style: { setProperty() {} } } });
       check('non-Chromium UA: lens gate off, chain stays the blur recipe',
         bodyEl.attributes['data-webg-lens'] === undefined &&
-          !bodyEl.style._props['--webg-backdrop-lens'].includes('url('),
-        bodyEl.attributes['data-webg-lens'] + ' ' + bodyEl.style._props['--webg-backdrop-lens']);
+          !bodyEl.style._props['--webg-chain-t2'].includes('url('),
+        bodyEl.attributes['data-webg-lens'] + ' ' + bodyEl.style._props['--webg-chain-t2']);
       navigatorMock.userAgent = CHROMIUM_UA;
       glassSlider.props.onChange({ target: { value: '16', style: { setProperty() {} } } });
+
+      // The surface-refraction toggle: off tears the lens down entirely
+      // (gate attribute + every inline chain) while the wallpaper keeps
+      // playing; on rebuilds it. Lives in the monitor row.
+      const toggleLabels = (function collect(t, out) {
+        (function walk(node) {
+          if (Array.isArray(node)) { node.forEach(walk); return; }
+          if (!node || typeof node !== 'object') return;
+          if (node.type === 'label' && Array.isArray(node.children) &&
+              node.children.some((c) => c && c.type === 'input' && c.props && c.props.type === 'checkbox')) {
+            out.push(node);
+          }
+          if (Array.isArray(node.children)) node.children.forEach(walk);
+        })(t);
+        return out;
+      })(tree, []);
+      const lensToggle = toggleLabels.find((n) => n.children.includes('表面折射'));
+      check('surface-refraction toggle present', Boolean(lensToggle));
+      if (lensToggle) {
+        const lensInput = lensToggle.children.find((c) => c && c.type === 'input');
+        check('lens toggle starts checked', lensInput.props.checked === true);
+        lensInput.props.onChange();
+        check('lens off lifts the gate attribute', bodyEl.attributes['data-webg-lens'] === undefined);
+        lensInput.props.onChange();
+        check('lens on restores the gate attribute', bodyEl.attributes['data-webg-lens'] === '');
+      }
     }
 
     // Smart veil math: fire the media's loadeddata so the sampler runs over
