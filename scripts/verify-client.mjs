@@ -385,7 +385,7 @@ setTimeout(async () => {
     props['--webg-noise-display']);
   // Glass chain: one var feeds every surface; the lens variant prefixes the
   // displacement filter (Chromium UA + mock canvas ⇒ lens is live here).
-  // 16px default reproduces the host menu anchor: saturate(1.2).
+      // 12px default sits in the liquid zone; vibrancy is constant 1.5.
   check('backdrop chain var default (liquid-zone blur, host vibrancy)',
     props['--webg-backdrop'] === 'blur(12px) saturate(1.5) brightness(1.04) contrast(1.01)',
     props['--webg-backdrop']);
