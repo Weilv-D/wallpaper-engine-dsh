@@ -1413,7 +1413,7 @@ function tierBlur(tier, blur) {
 function lensChain(tier, blur, bright) {
   const b = tierBlur(tier, blur);
   if (b <= 0) return "none";
-  const head = "blur(" + Math.max(1, b * 0.6).toFixed(1) + "px) ";
+  const head = "blur(" + (b * 0.6).toFixed(1) + "px) ";
   if (tier === "t1") {
     return head + "saturate(1.6) brightness(" + bright + ") contrast(1)";
   }
@@ -1465,11 +1465,15 @@ function rasterizeLens(w, h, rad, band) {
   if (typeof document === "undefined" || typeof document.createElement !== "function") return null;
   const canvas = document.createElement("canvas");
   if (!canvas || typeof canvas.getContext !== "function") return null;
+  // Maps rasterize at most 700px per side: the displacement field is
+  // low-frequency and feImage stretches it back per surface, so the cap
+  // only bounds the synchronous first-paint cost (a full-size dialog
+  // would otherwise pay a 1400-square pixel pass on the main thread).
   // The map carries a bounded border: feDisplacementMap samples past the
   // element box on the last row, and transparent black would read as a
   // full-strength displacement there.
   const pad = Math.max(2, Math.round(band / 2));
-  const cw = Math.min(1400, Math.round(w + pad * 2)), ch = Math.min(1400, Math.round(h + pad * 2));
+  const cw = Math.min(700, Math.round(w + pad * 2)), ch = Math.min(700, Math.round(h + pad * 2));
   canvas.width = cw; canvas.height = ch;
   const ctx = canvas.getContext("2d");
   if (!ctx || typeof ctx.createImageData !== "function" || typeof ctx.putImageData !== "function" ||
@@ -1596,9 +1600,19 @@ function createLensSlot(el, spec) {
 // Strips the per-view inline chain so the surface falls back to the CSS tier
 // chain; shared by the small-surface early-outs, the slot-drop sweep and
 // dispose, so a stale filter URL never outlives its map.
+// Corner radius is the map's last free input; read defensively (the surface
+// may be mid-detach).
+function lensRadius(el) {
+  try {
+    return Math.max(0, Math.min(parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0,
+      Math.min(el.clientWidth, el.clientHeight) / 2 - 1));
+  } catch { return 0; }
+}
+
 function clearLensChain(el) {
   if (!el || !el.style) return;
   el.style.removeProperty("--webg-lens-chain");
+  if (el.__webgLens) { el.__webgLens.w = 0; el.__webgLens.h = 0; el.__webgLens.r = 0; }
   el.style.removeProperty("--dsw-menu-backdrop-filter");
 }
 
@@ -1608,11 +1622,7 @@ function paintLensSlot(el) {
   const w = Math.round(el.clientWidth);
   const h = Math.round(el.clientHeight);
   if (w < 24 || h < 24) { clearLensChain(el); return; }
-  let radius = 0;
-  try {
-    const cs = getComputedStyle(el);
-    radius = parseFloat(cs.borderTopLeftRadius) || 0;
-  } catch { radius = 0; }
+  const radius = lensRadius(el);
   const band = slot.spec.band;
   const url = surfaceLensMap(w, h, Math.max(0, Math.min(radius, Math.min(w, h) / 2 - 1)), band);
   if (!url) { clearLensChain(el); return; }
@@ -1646,6 +1656,7 @@ function paintLensSlot(el) {
   }
   slot.w = w;
   slot.h = h;
+  slot.r = radius;
 }
 
 function scanLensSurfaces() {
@@ -1655,8 +1666,10 @@ function scanLensSurfaces() {
   try { found = document.body.querySelectorAll(LENS_SELECTOR); } catch { return; }
   for (const el of found) {
     if (el.__webgLens) {
+      const r = lensRadius(el);
       if (Math.round(el.clientWidth) !== el.__webgLens.w ||
-          Math.round(el.clientHeight) !== el.__webgLens.h) {
+          Math.round(el.clientHeight) !== el.__webgLens.h ||
+          r !== el.__webgLens.r) {
         paintLensSlot(el);
       }
       continue;
@@ -1671,6 +1684,7 @@ function scanLensSurfaces() {
   // Drop slots whose surface left the DOM.
   lensSlots = lensSlots.filter((slot) => {
     if (slot.el.isConnected) return true;
+    if (lensResizer) lensResizer.unobserve(slot.el);
     slot.filter.remove();
     if (slot.el.style) {
       slot.el.style.removeProperty("--webg-lens-chain");
@@ -1696,7 +1710,7 @@ function scheduleLensScan() {
 function attachLensWatcher() {
   if (lensMutator || typeof MutationObserver !== "function" || !document.body) return;
   lensMutator = new MutationObserver(() => scheduleLensScan());
-  lensMutator.observe(document.body, { childList: true, subtree: true });
+  lensMutator.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "data-composer-card", "data-menu-material"] });
 }
 
 function disposeLenses() {
