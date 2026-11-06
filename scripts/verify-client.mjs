@@ -864,8 +864,8 @@ setTimeout(async () => {
         check('dark frame needs no floor (user scrim stands)',
           bodyEl.style._props['--webg-scrim-color'] === 'rgba(0,0,0,0.25)',
           bodyEl.style._props['--webg-scrim-color']);
-        check('dark frame lifts the glass to the clamp ceiling',
-          bodyEl.style._props['--webg-glass-brightness'] === '1.12',
+        check('dark frame earns only a whisper of lift (no grey smoke)',
+          bodyEl.style._props['--webg-glass-brightness'] === '1.06',
           bodyEl.style._props['--webg-glass-brightness']);
         check('dark frame drops the clear-variant dim to zero',
           bodyEl.style._props['--webg-adapt-dim'] === 'rgba(0,0,0,0)',
