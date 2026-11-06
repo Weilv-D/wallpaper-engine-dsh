@@ -340,10 +340,20 @@ check('style tag injected on apply', headEl.children.some((n) => n.tagName === '
       styleCss.includes('[class$="_overlay"] > [class$="_panel"]:not([data-menu-material])::before') &&
       // Host border tokens stay at host values: hijacking them outlined
       // every elevated control in chalk. The borders slider lives on the
-      // glass rims instead (both theme couplings present).
+      // glass rims instead (both theme couplings present), and the strong
+      // l2/l3/l4 tiers step down a notch over glass.
       styleCss.includes('calc(0.34 * var(--webg-border-alpha') &&
       styleCss.includes('calc(0.51 * var(--webg-border-alpha') &&
       !styleCss.includes('--dsw-alias-border-l1: rgba(180') &&
+      styleCss.includes('--dsw-alias-border-l4: rgba(255, 255, 255, 0.13)') &&
+      // Clear glass (composer) keeps the hot asymmetric bevel; the regular
+      // family (menus, dialogs, docks, pages) gets the quiet panel stack.
+      styleCss.includes('--webg-panel-shadow:') &&
+      styleCss.includes('calc(0.20 * var(--webg-border-alpha') &&
+      styleCss.includes('calc(0.28 * var(--webg-border-alpha') &&
+      styleCss.includes('box-shadow: var(--webg-panel-shadow') &&
+      // The dock melts on the composer's own clear fill, not a deep tint.
+      styleCss.includes('background-color: var(--dsw-specific-input-major, rgba(255, 255, 255, 0.06))') &&
       styleCss.includes('.dshRemotePage') &&
       styleCss.includes('.dshRemotePage::before') &&
       styleCss.includes('[data-dsh-bottom-panel]') &&
