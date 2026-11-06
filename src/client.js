@@ -2434,15 +2434,16 @@ const CSS = `
      Two CSS-module naming conventions must both be caught: the infix
      form [class*="_dialog_"] (compounds like _dialogHeader lack the
      trailing underscore and are correctly skipped) and the suffix form
-     [class$="_panel"] — but ONLY inside an overlay container
-     ([class$="_overlay"]): the settings window, lightbox and stat
-     dialogs live in overlay+mask structures, while DOCKED panels share
-     the same hash_panel suffix and must stay out of the glass system
-     (glass is a floating-layer material — a bare suffix rule turned the
-     docked right-rail panel into a big grey slab). Menus are excluded:
-     they keep their own slider-adaptive fill. */
+     [class$="_panel"] — but ONLY as a DIRECT child of an overlay
+     container ([class$="_overlay"] > [class$="_panel"]): the settings
+     window and lightbox panels are the overlay's flex children, while
+     third-party sections nest their own hash_panel wrappers deep inside
+     the settings content — a descendant rule glassed those empty inner
+     wrappers into visible grey slabs (bili settings rendered as a blank
+     panel with one icon). Menus are excluded: they keep their own
+     slider-adaptive fill. */
   body[${ACTIVE_ATTR}] [class*="_dialog_"],
-  body[${ACTIVE_ATTR}] [class$="_overlay"] [class$="_panel"]:not([data-menu-material]) {
+  body[${ACTIVE_ATTR}] [class$="_overlay"] > [class$="_panel"]:not([data-menu-material]) {
     background-color: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 80%, transparent);
     background-image: var(--webg-grain), var(--webg-dim-veil), var(--webg-sheen);
     background-size: 140px 140px, 100% 100%, 100% 100%;
@@ -2476,7 +2477,7 @@ const CSS = `
     body[${ACTIVE_ATTR}] [data-menu-material],
   body[${ACTIVE_ATTR}] [data-composer-dock] [class*="_panel"],
   body[${ACTIVE_ATTR}] [class*="_dialog_"],
-  body[${ACTIVE_ATTR}] [class$="_overlay"] [class$="_panel"]:not([data-menu-material]),
+  body[${ACTIVE_ATTR}] [class$="_overlay"] > [class$="_panel"]:not([data-menu-material]),
   body[${ACTIVE_ATTR}] .dshRemotePage,
   body[${ACTIVE_ATTR}] .webg-adjust-bar {
       transition: background-color 180ms ease, box-shadow 180ms ease;
@@ -2498,7 +2499,7 @@ const CSS = `
   body[${ACTIVE_ATTR}][${LENS_ATTR}] [data-menu-material],
   body[${ACTIVE_ATTR}][${LENS_ATTR}] [data-composer-dock] [class*="_panel"],
   body[${ACTIVE_ATTR}][${LENS_ATTR}] [class*="_dialog_"],
-  body[${ACTIVE_ATTR}][${LENS_ATTR}] [class$="_overlay"] [class$="_panel"]:not([data-menu-material]),
+  body[${ACTIVE_ATTR}][${LENS_ATTR}] [class$="_overlay"] > [class$="_panel"]:not([data-menu-material]),
   body[${ACTIVE_ATTR}][${LENS_ATTR}] .dshRemotePage,
   body[${ACTIVE_ATTR}][${LENS_ATTR}] .webg-adjust-bar {
     -webkit-backdrop-filter: var(--webg-backdrop-lens, var(--webg-backdrop, blur(12px)));
@@ -2549,7 +2550,7 @@ const CSS = `
     body[${ACTIVE_ATTR}] [data-menu-material],
     body[${ACTIVE_ATTR}] [data-composer-dock] [class*="_panel"],
     body[${ACTIVE_ATTR}] [class*="_dialog_"],
-    body[${ACTIVE_ATTR}] [class$="_overlay"] [class$="_panel"]:not([data-menu-material]),
+    body[${ACTIVE_ATTR}] [class$="_overlay"] > [class$="_panel"]:not([data-menu-material]),
     body[${ACTIVE_ATTR}] .webg-adjust-bar {
       -webkit-backdrop-filter: none !important;
       backdrop-filter: none !important;
@@ -2557,7 +2558,7 @@ const CSS = `
       box-shadow: var(--dsw-elevation-soft, 0 3px 8px rgba(0, 0, 0, 0.08));
     }
     body[${ACTIVE_ATTR}] [class*="_dialog_"],
-    body[${ACTIVE_ATTR}] [class$="_overlay"] [class$="_panel"]:not([data-menu-material]) {
+    body[${ACTIVE_ATTR}] [class$="_overlay"] > [class$="_panel"]:not([data-menu-material]) {
       background-color: var(--dsw-alias-bg-layer-2);
     }
   }
