@@ -2737,7 +2737,7 @@ const CSS = `
      chalk. The borders slider instead scales the RIM on the plugin's own
      glass surfaces: the hairline-ring entries of --webg-glass-shadow are
      coupled to --webg-border-alpha (host-level at the 0.35 default, up to
-     ~3x at the ceiling for busy wallpapers, gone at zero). */
+     ~2.6x at the ceiling for busy wallpapers, gone at zero). */
   body[${ACTIVE_ATTR}] {
     --dsw-alias-bg-base: transparent;
     --dsw-alias-settings-card-fill: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 58%, transparent);
@@ -2867,8 +2867,8 @@ const CSS = `
       inset 1px 0 0 hsl(220 25% 6% / 0.14),
       inset -1px 0 0 hsl(220 25% 6% / 0.14),
       inset 0 0 2px 1px hsl(220 40% 4% / calc(0.30 * (1.2 - var(--webg-rim)))),
-      inset 0 0 0 0.5px hsl(0 0% 100% / calc(0.09 * var(--webg-rim))),
-      0 0 0 0.5px hsl(220 22% 4% / 0.45);
+      inset 0 0 0 0.5px hsl(0 0% 100% / calc(0.09 * var(--webg-rim) * var(--webg-border-alpha, 0.35) / 0.35)),
+      0 0 0 0.5px hsl(220 22% 4% / calc(0.45 * var(--webg-border-alpha, 0.35) / 0.35));
     /* Elevation: four steps. Contact is tight and always present; mid and
        far drops carry the wallpaper's hue so the shadow belongs to the
        scene instead of punching a grey hole in it. */

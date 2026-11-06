@@ -356,7 +356,7 @@ check('style tag injected on apply', headEl.children.some((n) => n.tagName === '
       styleCss.includes('[class$="_overlay"] > [class$="_panel"]:not([data-menu-material])::before') &&
       // The glass hairline rides the borders slider; host border tokens stay
       // at host values (hijacking them outlined every elevated control).
-      styleCss.includes('calc(0.09 * var(--webg-rim))') &&
+      styleCss.includes('calc(0.09 * var(--webg-rim) * var(--webg-border-alpha, 0.35) / 0.35)') &&
       !styleCss.includes('--dsw-alias-border-l1: rgba(180') &&
       styleCss.includes('--dsw-alias-border-l4: rgba(255, 255, 255, 0.13)') &&
       // Every tier keeps a shadow token of its own.
