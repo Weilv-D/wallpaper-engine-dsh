@@ -279,7 +279,7 @@ check('inject declares slots, locale, theme',
   JSON.stringify(exportsObj.inject) === '["slots","locale","theme"]',
   JSON.stringify(exportsObj.inject));
 check('bundle carries no legacy data-ds-dark-theme hook', !code.includes('data-ds-dark-theme'));
-check('glass wake machinery present in bundle', code.includes('function triggerGlassWake') && code.includes('triggerGlassWake();') && code.includes('glassWake ? 0.25 : 0'));
+check('glass wake machinery present in bundle', code.includes('function triggerGlassWake') && code.includes('triggerGlassWake();') && code.includes('glassWake ? 0.22 : 0'));
 check('Symbol.toStringTag is Module', Object.prototype.toString.call(exportsObj) === '[object Module]');
 
 // ── apply() with a mock Cordis ctx ──────────────────────────────────────────
@@ -337,42 +337,49 @@ check('style tag injected on apply', headEl.children.some((n) => n.tagName === '
   // Liquid-glass material inventory: the four Apple cues must all be in the
   // stylesheet — grain tile, asymmetric edge stack (--webg-edge alphas in
   // calc), the lens-gated chain var, and both accessibility blocks.
+  // Liquid-glass material inventory (v3): the wallpaper-sampled body, the
+  // lit-column bevel, the four elevation steps, the per-tier chains and both
+  // accessibility blocks.
   check('liquid-glass material blocks present in css',
     styleCss.includes('--webg-grain:') &&
       // Apple-subliminal dither, not frosted sand: the grain matrix's alpha
       // row must stay in the ~3% band (regression lock against 12%).
       styleCss.includes('0 0 0 0.035 0') &&
       !styleCss.includes('0 0 0 0.12 0') &&
-      styleCss.includes('calc(0.40 * var(--webg-edge') &&
-      styleCss.includes('var(--webg-backdrop-lens') &&
+      // Body is a wallpaper-derived glass body, not a white wash.
+      styleCss.includes('--webg-body: hsl(var(--webg-tint-h)') &&
+      styleCss.includes('--webg-bevel:') &&
+      styleCss.includes('calc(0.44 * var(--webg-rim))') &&
+      styleCss.includes('calc(0.24 * var(--webg-rim))') &&
+      styleCss.includes('--webg-e2:') &&
+      styleCss.includes('--webg-e3:') &&
+      styleCss.includes('--webg-spec-gloss:') &&
+      styleCss.includes('--webg-lens-chain') &&
       styleCss.includes('data-webg-lens') &&
-      styleCss.includes('--dsw-menu-backdrop-filter: var(--webg-backdrop') &&
-      styleCss.includes('--dsw-menu-surface-fill: rgba(67, 69, 74, var(--webg-menu-fill-alpha') &&
+      styleCss.includes('--dsw-menu-backdrop-filter: var(--webg-chain-t2') &&
+      styleCss.includes('--dsw-menu-surface-fill: var(--webg-body)') &&
       styleCss.includes('[class$="_overlay"] > [class$="_panel"]:not([data-menu-material])::before') &&
-      // Host border tokens stay at host values: hijacking them outlined
-      // every elevated control in chalk. The borders slider lives on the
-      // glass rims instead (dark ring 0.51 + dark contour 0.18), and the strong
-      // l2/l3/l4 tiers step down a notch over glass.
-      styleCss.includes('calc(0.18 * var(--webg-border-alpha') &&
-      styleCss.includes('calc(0.51 * var(--webg-border-alpha') &&
+      // The glass hairline rides the borders slider; host border tokens stay
+      // at host values (hijacking them outlined every elevated control).
+      styleCss.includes('calc(0.09 * var(--webg-rim))') &&
       !styleCss.includes('--dsw-alias-border-l1: rgba(180') &&
       styleCss.includes('--dsw-alias-border-l4: rgba(255, 255, 255, 0.13)') &&
-      // Clear glass (composer) keeps the hot asymmetric bevel; the regular
-      // family (menus, dialogs, docks, pages) gets the quiet panel stack.
-      styleCss.includes('--webg-panel-shadow:') &&
-      styleCss.includes('0 4px 14px') &&
-      styleCss.includes('calc(0.28 * var(--webg-border-alpha') &&
-      // Dark-pinned material + fluidity: @property layer, wake-driven
-      // transition tokens and the adjust-bar entrance.
+      // Every tier keeps a shadow token of its own.
+      styleCss.includes('--webg-glass-shadow: var(--webg-bevel), var(--webg-e1)') &&
+      styleCss.includes('--webg-panel-shadow: var(--webg-bevel), var(--webg-e2)') &&
+      styleCss.includes('--webg-deep-shadow: var(--webg-bevel), var(--webg-e3)') &&
+      // @property + fluidity: the thickness token eases, the crop bar springs.
       styleCss.includes('@property --webg-edge') &&
+      styleCss.includes('@property --webg-rim') &&
       styleCss.includes('@property --webg-adapt-dim') &&
       styleCss.includes('--webg-adapt-dim 600ms ease') &&
+      styleCss.includes('--webg-rim 700ms ease') &&
       styleCss.includes('--webg-edge 700ms ease') &&
       styleCss.includes('@keyframes webg-bar-in') &&
-      styleCss.includes('rgba(213, 229, 255') &&
       styleCss.includes('box-shadow: var(--webg-panel-shadow') &&
-      // The dock melts on the composer's own clear fill, not a deep tint.
+      // The dock is T2 light glass now, not a bare hole and not a deep tint.
       !styleCss.includes('[data-dsh-bottom-panel]::before') &&
+      styleCss.includes('[data-dsh-bottom-panel]') &&
       // new-session button rides the clear control tier; collapsed stays bare
       styleCss.includes('[class$="_newSession"]') &&
       styleCss.includes('color-mix(in srgb, var(--dsw-alias-button-elevated-fill) 42%') &&
@@ -388,11 +395,13 @@ check('style tag injected on apply', headEl.children.some((n) => n.tagName === '
       styleCss.includes('color-mix(in srgb, var(--dsw-alias-button-info-fill) 85%') &&
       styleCss.includes('.dshRemotePage') &&
       styleCss.includes('.dshRemotePage::before') &&
-      styleCss.includes('[data-dsh-bottom-panel]') &&
       styleCss.includes('[data-dsh-bottom-panel] [class$="_tabBar"]') &&
+      // Content layers carry no backdrop: bubbles and Q&A cards keep body only.
+      styleCss.includes('[class*="_bubble"]:not(:has([class*="_question"]))') &&
+      styleCss.includes('[class*="_bubble"]:has([class*="_question"])') &&
       styleCss.includes('@media (prefers-contrast: more)') &&
       styleCss.includes('@media (prefers-reduced-transparency: reduce)'),
-    'grain/edge/lens/token/dock/contrast/transparency markers');
+    'body/bevel/elevation/tier/lens/contrast/transparency markers');
 }
 check('initial fetch hits inventory', fetchCalls.includes('/we-background/inventory'), fetchCalls.join(','));
 check('theme/change handler bound for shell theme service',
@@ -432,38 +441,34 @@ setTimeout(async () => {
     props['--webg-media-filter']);
   check('noise overlay hidden at zero blur', props['--webg-noise-display'] === 'none',
     props['--webg-noise-display']);
-  // Glass chain: one var feeds every surface; the lens variant prefixes the
-  // displacement filter (Chromium UA + mock canvas ⇒ lens is live here).
-      // 8px default sits in the liquid zone; vibrancy is constant 1.5.
-  check('backdrop chain var default (liquid-zone blur, host vibrancy)',
-    props['--webg-backdrop'] === 'blur(8px) saturate(1.5) brightness(1.04) contrast(1.01)',
+  // Glass chain: the tiered chains feed every surface. At the 8px default the
+  // T2 chain is 8px of blur with the tier's vibrancy (1.4) and its tone
+  // flattening (0.92) — the flattening is what keeps text readable over a
+  // saturated poster without stacking more fill.
+  check('backdrop chain var default (T2 blur, tier vibrancy, flattened tone)',
+    props['--webg-backdrop'] === 'blur(8px) saturate(1.4) brightness(1.04) contrast(0.92)',
     props['--webg-backdrop']);
-  check('lens chain appends the displacement filter (melt first, bend last)',
-    props['--webg-backdrop-lens'] === props['--webg-backdrop'] + ' url(#webg-lens)',
+  check('tier chains are all written for the css tiers to pick up',
+    /^blur\(\d+px\) saturate\(1\.6\) brightness\([\d.]+\) contrast\(1\)$/.test(props['--webg-chain-t1']) &&
+      /^blur\(\d+px\) saturate\(1\.3\) brightness\([\d.]+\) contrast\(0\.9\)$/.test(props['--webg-chain-t3']),
+    props['--webg-chain-t1'] + ' | ' + props['--webg-chain-t3']);
+  check('compat lens alias mirrors the T2 chain (lenses are per surface now)',
+    props['--webg-backdrop-lens'] === props['--webg-backdrop'],
     props['--webg-backdrop-lens']);
-  check('edge specular strength rides the glass slider',
-    props['--webg-edge'] === '0.82', props['--webg-edge']);
+  check('edge specular strength rides the glass slider (wallpaper-adaptive)',
+    props['--webg-rim'] === '0.585' && props['--webg-edge'] === props['--webg-rim'],
+    props['--webg-rim'] + ' / ' + props['--webg-edge']);
   check('adapt-dim idle at zero luminance evidence',
     props['--webg-adapt-dim'] === 'rgba(0,0,0,0)', props['--webg-adapt-dim']);
-  check('menu fill sits at glass level at the default blur',
-    props['--webg-menu-fill-alpha'] === '0.72', props['--webg-menu-fill-alpha']);
-  check('lens svg defs mounted under body',
-    Boolean(documentMock.getElementById('wallpaper-engine-dsh-lens')));
+  check('glass body takes the wallpaper tint, not a fixed fill',
+    props['--webg-tint-a'] === '0.270' && props['--webg-tint-s'] === '6.2%',
+    props['--webg-tint-a'] + ' / ' + props['--webg-tint-s']);
   check('body lens gate attribute set', bodyEl.attributes['data-webg-lens'] === '');
-  {
-    const lensSvg = documentMock.getElementById('wallpaper-engine-dsh-lens');
-    const defs = lensSvg && lensSvg.children[0];
-    const filter = defs && defs.children[0];
-    check('lens filter: sRGB + feImage map + displacement wiring',
-      Boolean(filter) && filter.attributes['color-interpolation-filters'] === 'sRGB' &&
-        filter.children.length === 2 &&
-        filter.children[0].tagName === 'FEIMAGE' &&
-        filter.children[0].attributes.preserveAspectRatio === 'none' &&
-        filter.children[0].attributes.href === 'data:image/png;base64,TEVOU01BUA==' &&
-        filter.children[1].tagName === 'FEDISPLACEMENTMAP' &&
-        filter.children[1].attributes.scale === '28',
-      filter ? 'filter present' : 'filter missing');
-  }
+  // The lens is per surface: a single shared 256px map stretched across every
+  // pane is the defect v3 removed, so the bundle must not reference it.
+  check('no shared url(#webg-lens) map survives',
+    !code.includes('url(#webg-lens') && code.includes('preserveAspectRatio') &&
+      code.includes('xChannelSelector') && code.includes('ResizeObserver'));
 
   // Rotation: 5-minute timer from the group, fires → 'b' (web wallpaper).
   const rotationTimer = timers.find((t) => !t.cleared && t.ms === 300000);
@@ -846,22 +851,22 @@ setTimeout(async () => {
         bodyEl.style._props['--webg-media-filter'] === 'none' &&
           bodyEl.style._props['--webg-noise-display'] === 'none');
 
-      // Glass slider (index 3) drives the shared chain var. At 40 it must
-      // reproduce the host menu anchor blur(40px) saturate(150%); at 0 the
-      // whole glass pipeline collapses to none (surfaces keep translucent
-      // token fills) and the lens gate lifts — displacement without blur
-      // would amplify the stretched map's single-pixel steps.
+      // Glass slider (index 3) drives the tiered chains. At 40 the T2 chain
+      // caps at 10px (a 40px melt reads as milky plastic once the tint sits on
+      // top); at 0 the whole glass pipeline collapses to none and the lens
+      // gate lifts — displacement without blur amplifies the map's steps.
       const glassSlider = sliders[3];
       glassSlider.props.onChange({ target: { value: '40', style: { setProperty() {} } } });
-      check('glass 40 = the host menu anchor recipe',
-        bodyEl.style._props['--webg-backdrop'] === 'blur(40px) saturate(1.5) brightness(1.04) contrast(1.01)',
+      check('glass 40 caps the T2 melt at the tier ceiling',
+        bodyEl.style._props['--webg-backdrop'] === 'blur(10px) saturate(1.4) brightness(1.04) contrast(0.92)',
         bodyEl.style._props['--webg-backdrop']);
-      check('lens var carries the bend at 40 too',
-        bodyEl.style._props['--webg-backdrop-lens'].endsWith('url(#webg-lens)'),
+      check('the compat lens alias stays the tier chain at 40 too',
+        bodyEl.style._props['--webg-backdrop-lens'] === bodyEl.style._props['--webg-backdrop'],
         bodyEl.style._props['--webg-backdrop-lens']);
-      check('edge strength reaches its ceiling at 40px glass',
-        bodyEl.style._props['--webg-edge'] === '1.30',
-        bodyEl.style._props['--webg-edge']);
+      check('edge strength rides the slider, still wallpaper-bound',
+        bodyEl.style._props['--webg-rim'] === '0.585' &&
+          bodyEl.style._props['--webg-edge'] === bodyEl.style._props['--webg-rim'],
+        bodyEl.style._props['--webg-rim']);
       glassSlider.props.onChange({ target: { value: '0', style: { setProperty() {} } } });
       check('glass 0 collapses the chain to none (no filter pipeline)',
         bodyEl.style._props['--webg-backdrop'] === 'none' &&
