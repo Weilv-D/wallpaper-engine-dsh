@@ -338,6 +338,7 @@ check('style tag injected on apply', headEl.children.some((n) => n.tagName === '
       styleCss.includes('--dsw-menu-backdrop-filter: var(--webg-backdrop') &&
       styleCss.includes('--dsw-menu-surface-fill: rgba(67, 69, 74, var(--webg-menu-fill-alpha') &&
       styleCss.includes('[class$="_overlay"] > [class$="_panel"]:not([data-menu-material])') &&
+      styleCss.includes('calc(0.35 * var(--webg-border-alpha') &&
       styleCss.includes('.dshRemotePage') &&
       styleCss.includes('@media (prefers-contrast: more)') &&
       styleCss.includes('@media (prefers-reduced-transparency: reduce)'),

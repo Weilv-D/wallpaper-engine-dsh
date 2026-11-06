@@ -2287,9 +2287,15 @@ const CSS = `
   body[${ACTIVE_ATTR}] {
     --dsw-alias-bg-base: transparent;
     --dsw-specific-sidebar-fill: transparent;
+    /* Two tiers, matching the host's own semantics: l1 is the outer frame
+       (borders that must read against the wallpaper) and keeps the slider's
+       full strength; l2/l2-thin are INNER separators — page tab underlines,
+       row dividers — which sit on panels, not on the wallpaper. Hijacking
+       them at full strength turned every separator into a bright line (the
+       plugins page tabs bar read as a white rule). */
     --dsw-alias-border-l1: rgba(180, 180, 180, var(--webg-border-alpha, 0.35));
-    --dsw-alias-border-l2: rgba(180, 180, 180, var(--webg-border-alpha, 0.35));
-    --dsw-alias-border-l2-darkmode-thin: rgba(180, 180, 180, var(--webg-border-alpha, 0.35));
+    --dsw-alias-border-l2: rgba(180, 180, 180, calc(0.35 * var(--webg-border-alpha, 0.35)));
+    --dsw-alias-border-l2-darkmode-thin: rgba(180, 180, 180, calc(0.35 * var(--webg-border-alpha, 0.35)));
   }
 
   /* Light-scheme text ramp: grays were tuned against a near-white page and
