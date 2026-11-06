@@ -1362,8 +1362,8 @@ function materialTokens() {
     tintA: Math.min(0.46, Math.max(0.20, 0.235 + 0.10 * lum + 0.17 * busy)),
     // Dark wallpaper: stronger rim (the edge is the only thing that can
     // separate glass from black), softer shadow.
-    rim: 0.52 + 0.10 * (1 - lum),
-    spec: 0.20 + 0.08 * (1 - lum),
+    rim: 0.54 + 0.12 * (1 - lum),
+    spec: 0.22 + 0.09 * (1 - lum),
     shadowK: 0.55 + 0.45 * lum,
     busy,
     lum,
@@ -1410,11 +1410,11 @@ function cancelLater(id) {
 // each hero surface gets a map rasterised at its own pixel size, with the
 // band in absolute px and the radius read from its computed style.
 const LENS_SURFACES = [
-  { sel: "[data-composer-card]", band: 10, tier: "t2" },
+  { sel: "[data-composer-card]", band: 12, tier: "t2" },
   { sel: "[data-menu-material]", band: 8, tier: "t2", menuToken: true },
   { sel: '[data-composer-dock] [class*="_panel"]', band: 8, tier: "t2" },
-  { sel: '[class*="_dialog_"]', band: 12, tier: "t3" },
-  { sel: '[class$="_overlay"] > [class$="_panel"]', band: 12, tier: "t3", pseudo: true },
+  { sel: '[class*="_dialog_"]', band: 14, tier: "t3" },
+  { sel: '[class$="_overlay"] > [class$="_panel"]', band: 14, tier: "t3", pseudo: true },
   { sel: ".webg-adjust-bar", band: 8, tier: "t1" },
 ];
 const LENS_SELECTOR = LENS_SURFACES.map((s) => s.sel).join(",");
@@ -1489,7 +1489,7 @@ function lensRoot() {
   svg.setAttribute("width", "0");
   svg.setAttribute("height", "0");
   svg.setAttribute("style",
-    "position:fixed;left:-10px;top:-10px;width:1px;height:1px;opacity:0;pointer-events:none");
+    "position:fixed;left:0;top:0;width:0;height:0;overflow:hidden;pointer-events:none");
   const defs = document.createElementNS(SVG_NS, "defs");
   svg.appendChild(defs);
   document.body.appendChild(svg);
@@ -1510,6 +1510,7 @@ function createLensSlot(el, spec) {
   filter.setAttribute("color-interpolation-filters", "sRGB");
   const image = document.createElementNS(SVG_NS, "feImage");
   image.setAttribute("preserveAspectRatio", "none");
+  image.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", "");
   image.setAttribute("result", "map");
   const disp = document.createElementNS(SVG_NS, "feDisplacementMap");
   disp.setAttribute("in", "SourceGraphic");
@@ -1560,9 +1561,10 @@ function paintLensSlot(el) {
   const url = surfaceLensMap(w, h, Math.max(0, Math.min(radius, Math.min(w, h) / 2 - 1)), band);
   if (!url) return;
   slot.image.setAttribute("href", url);
+  slot.image.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", url);
   slot.image.setAttribute("width", String(w));
   slot.image.setAttribute("height", String(h));
-  slot.disp.setAttribute("scale", String(Math.round(band * 2.1)));
+  slot.disp.setAttribute("scale", String(Math.round(band * 2.35)));
   const chain = tierChain(slot.spec.tier, selection.blur, lastGlassBright);
   if (chain === "none") return;
   const filterUrl = " url(#" + slot.id + ")";
@@ -1909,6 +1911,10 @@ function applyEffects() {
   // mounted) get their per-view maps here; the watcher covers the rest.
   if (lensOn) {
     attachLensWatcher();
+    // Repaint every live slot: the inline chain embeds the current blur tier
+    // and wallpaper brightness, so a slider move must rewrite it even when
+    // the surface keeps its size.
+    for (const slot of lensSlots) paintLensSlot(slot.el);
     scheduleLensScan();
   }
   syncPointerLight();
@@ -2771,8 +2777,8 @@ const CSS = `
        hairline, and a dark outer contour that separates the glass from a
        bright backdrop. */
     --webg-bevel:
-      inset 0 1px 0 hsl(0 0% 100% / calc(0.44 * var(--webg-rim))),
-      inset 0 2px 2px -1px hsl(0 0% 100% / calc(0.24 * var(--webg-rim))),
+      inset 0 1px 0 hsl(0 0% 100% / calc(0.50 * var(--webg-rim))),
+      inset 0 2px 2px -1px hsl(0 0% 100% / calc(0.26 * var(--webg-rim))),
       inset 0 7px 13px -9px hsl(0 0% 100% / calc(0.34 * var(--webg-rim))),
       inset 0 0 18px -11px hsl(0 0% 100% / calc(0.22 * var(--webg-rim))),
       inset 0 -1px 0 hsl(0 0% 100% / calc(0.24 * var(--webg-rim))),
@@ -2942,6 +2948,11 @@ const CSS = `
      is host territory there anyway; Windows/browser builds are unaffected.) */
   body[${ACTIVE_ATTR}] {
     --dsw-menu-backdrop-filter: var(--webg-chain-t2, var(--webg-backdrop, blur(40px) saturate(150%)));
+    /* The same panels paint their own fill from --dsw-specific-menu. Leaving
+       it at the host value stacks an opaque rectangle on top of the glass and
+       reads as a second, inset panel. Clear it so the glass body is the only
+       fill. */
+    --dsw-specific-menu: transparent;
   }
   body[${ACTIVE_ATTR}][${LENS_ATTR}] {
     --dsw-menu-backdrop-filter: var(--webg-lens-chain, var(--webg-chain-t2, blur(40px) saturate(150%)));
@@ -3048,12 +3059,13 @@ const CSS = `
   body[${ACTIVE_ATTR}] .dshRemotePage::before {
     content: ""; position: absolute; inset: 0; z-index: -1;
     border-radius: inherit;
-    background-color: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 85%, transparent);
+    background-color: var(--webg-body);
     background-image: var(--webg-glass-layers);
     background-size: var(--webg-glass-sizes);
     background-repeat: var(--webg-glass-repeats);
     -webkit-backdrop-filter: var(--webg-lens-chain, var(--webg-chain-t3, var(--webg-backdrop, blur(12px) saturate(1.5) brightness(1.04) contrast(1.01))));
     backdrop-filter: var(--webg-lens-chain, var(--webg-chain-t3, var(--webg-backdrop, blur(12px) saturate(1.5) brightness(1.04) contrast(1.01))));
+    box-shadow: var(--webg-deep-shadow, 0 24px 64px rgba(0, 0, 0, 0.4));
   }
 
   /* Bottom workbench dock (dsh-better-sidebar's editor/terminal panel).

@@ -349,8 +349,8 @@ check('style tag injected on apply', headEl.children.some((n) => n.tagName === '
       // Body is a wallpaper-derived glass body, not a white wash.
       styleCss.includes('--webg-body: hsl(var(--webg-tint-h)') &&
       styleCss.includes('--webg-bevel:') &&
-      styleCss.includes('calc(0.44 * var(--webg-rim))') &&
-      styleCss.includes('calc(0.24 * var(--webg-rim))') &&
+      styleCss.includes('calc(0.50 * var(--webg-rim))') &&
+      styleCss.includes('calc(0.26 * var(--webg-rim))') &&
       styleCss.includes('--webg-e2:') &&
       styleCss.includes('--webg-e3:') &&
       styleCss.includes('--webg-spec-gloss:') &&
@@ -485,7 +485,7 @@ setTimeout(async () => {
     props['--webg-backdrop-lens'] === props['--webg-backdrop'],
     props['--webg-backdrop-lens']);
   check('edge specular strength rides the glass slider (wallpaper-adaptive)',
-    props['--webg-rim'] === '0.585' && props['--webg-edge'] === props['--webg-rim'],
+    props['--webg-rim'] === '0.618' && props['--webg-edge'] === props['--webg-rim'],
     props['--webg-rim'] + ' / ' + props['--webg-edge']);
   check('adapt-dim idle at zero luminance evidence',
     props['--webg-adapt-dim'] === 'rgba(0,0,0,0)', props['--webg-adapt-dim']);
@@ -893,7 +893,7 @@ setTimeout(async () => {
         bodyEl.style._props['--webg-backdrop-lens'] === bodyEl.style._props['--webg-backdrop'],
         bodyEl.style._props['--webg-backdrop-lens']);
       check('edge strength rides the slider, still wallpaper-bound',
-        bodyEl.style._props['--webg-rim'] === '0.585' &&
+        bodyEl.style._props['--webg-rim'] === '0.618' &&
           bodyEl.style._props['--webg-edge'] === bodyEl.style._props['--webg-rim'],
         bodyEl.style._props['--webg-rim']);
       glassSlider.props.onChange({ target: { value: '0', style: { setProperty() {} } } });
