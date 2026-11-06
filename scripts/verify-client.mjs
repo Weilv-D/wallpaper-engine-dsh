@@ -340,6 +340,7 @@ check('style tag injected on apply', headEl.children.some((n) => n.tagName === '
       styleCss.includes('[class$="_overlay"] > [class$="_panel"]:not([data-menu-material])::before') &&
       styleCss.includes('calc(0.35 * var(--webg-border-alpha') &&
       styleCss.includes('.dshRemotePage') &&
+      styleCss.includes('.dshRemotePage::before') &&
       styleCss.includes('@media (prefers-contrast: more)') &&
       styleCss.includes('@media (prefers-reduced-transparency: reduce)'),
     'grain/edge/lens/token/contrast/transparency markers');

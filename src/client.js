@@ -2491,14 +2491,24 @@ const CSS = `
      through sharply. ds-harness-remote's .dshRemotePage (stable, non-hashed
      class prefix — same convention as this plugin's webg-*) is the known
      case; dense content floating above the app gets the dialog treatment:
-     deep fill + full material + the shared chain, not a hole. */
+     deep fill + full material + the shared chain, not a hole. The melt
+     rides a ::before layer (same containment reasoning as the overlay
+     window panels: the page hosts third-party content whose fixed layers
+     must keep anchoring to the viewport — and the page is position:fixed
+     with a z-index, so it is already its own stacking context and the
+     -1 pseudo paints above its transparent fill, below its content). */
   body[${ACTIVE_ATTR}] .dshRemotePage {
+    background-color: transparent;
+    box-shadow: var(--webg-glass-shadow, 0 12px 40px rgba(0, 0, 0, 0.14));
+  }
+  body[${ACTIVE_ATTR}] .dshRemotePage::before {
+    content: ""; position: absolute; inset: 0; z-index: -1;
+    border-radius: inherit;
     background-color: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 85%, transparent);
     background-image: var(--webg-grain), var(--webg-dim-veil), var(--webg-sheen);
     background-size: 140px 140px, 100% 100%, 100% 100%;
     -webkit-backdrop-filter: var(--webg-backdrop, blur(12px) saturate(1.5) brightness(1.04) contrast(1.01));
     backdrop-filter: var(--webg-backdrop, blur(12px) saturate(1.5) brightness(1.04) contrast(1.01));
-    box-shadow: var(--webg-glass-shadow, 0 12px 40px rgba(0, 0, 0, 0.14));
   }
 
   /* Theme flips and slider-driven edge changes ease in instead of
@@ -2513,6 +2523,7 @@ const CSS = `
   body[${ACTIVE_ATTR}] [class$="_overlay"] > [class$="_panel"]:not([data-menu-material]),
   body[${ACTIVE_ATTR}] [class$="_overlay"] > [class$="_panel"]:not([data-menu-material])::before,
   body[${ACTIVE_ATTR}] .dshRemotePage,
+  body[${ACTIVE_ATTR}] .dshRemotePage::before,
   body[${ACTIVE_ATTR}] .webg-adjust-bar {
       transition: background-color 180ms ease, box-shadow 180ms ease;
     }
@@ -2534,7 +2545,7 @@ const CSS = `
   body[${ACTIVE_ATTR}][${LENS_ATTR}] [data-composer-dock] [class*="_panel"],
   body[${ACTIVE_ATTR}][${LENS_ATTR}] [class*="_dialog_"],
   body[${ACTIVE_ATTR}][${LENS_ATTR}] [class$="_overlay"] > [class$="_panel"]:not([data-menu-material])::before,
-  body[${ACTIVE_ATTR}][${LENS_ATTR}] .dshRemotePage,
+  body[${ACTIVE_ATTR}][${LENS_ATTR}] .dshRemotePage::before,
   body[${ACTIVE_ATTR}][${LENS_ATTR}] .webg-adjust-bar {
     -webkit-backdrop-filter: var(--webg-backdrop-lens, var(--webg-backdrop, blur(12px)));
     backdrop-filter: var(--webg-backdrop-lens, var(--webg-backdrop, blur(12px)));
@@ -2599,8 +2610,12 @@ const CSS = `
        (containing-block safety — see the glass section): under reduced
        transparency the whole layer is removed and the panel's own solid
        fill above takes over. */
-    body[${ACTIVE_ATTR}] [class$="_overlay"] > [class$="_panel"]:not([data-menu-material])::before {
+    body[${ACTIVE_ATTR}] [class$="_overlay"] > [class$="_panel"]:not([data-menu-material])::before,
+    body[${ACTIVE_ATTR}] .dshRemotePage::before {
       content: none;
+    }
+    body[${ACTIVE_ATTR}] .dshRemotePage {
+      background-color: var(--dsw-alias-bg-layer-2);
     }
   }
 
