@@ -372,7 +372,13 @@ check('style tag injected on apply', headEl.children.some((n) => n.tagName === '
       styleCss.includes('rgba(213, 229, 255') &&
       styleCss.includes('box-shadow: var(--webg-panel-shadow') &&
       // The dock melts on the composer's own clear fill, not a deep tint.
-      styleCss.includes('background-color: var(--dsw-specific-input-major, rgba(255, 255, 255, 0.06))') &&
+      !styleCss.includes('[data-dsh-bottom-panel]::before') &&
+      // new-session button rides the clear control tier; collapsed stays bare
+      styleCss.includes('[class$="_newSession"]') &&
+      styleCss.includes('color-mix(in srgb, var(--dsw-alias-button-elevated-fill) 42%') &&
+      styleCss.includes('[class*="_collapsed"] [class$="_newSession"]') &&
+      // settings/account cards soften to a translucent layer via one token
+      styleCss.includes('--dsw-alias-settings-card-fill: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 58%') &&
       // Composer controls ride Apple's tiers: neutral affordance = clear
       // glass on the selector token; primary action = prominent tinted
       // glass at 85% (tint stays dominant for the white glyph).
@@ -383,7 +389,7 @@ check('style tag injected on apply', headEl.children.some((n) => n.tagName === '
       styleCss.includes('.dshRemotePage') &&
       styleCss.includes('.dshRemotePage::before') &&
       styleCss.includes('[data-dsh-bottom-panel]') &&
-      styleCss.includes('[data-dsh-bottom-panel]::before') &&
+      styleCss.includes('[data-dsh-bottom-panel] [class$="_tabBar"]') &&
       styleCss.includes('@media (prefers-contrast: more)') &&
       styleCss.includes('@media (prefers-reduced-transparency: reduce)'),
     'grain/edge/lens/token/dock/contrast/transparency markers');

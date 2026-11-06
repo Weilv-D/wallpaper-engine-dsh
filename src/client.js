@@ -2346,6 +2346,7 @@ const CSS = `
      ~3x at the ceiling for busy wallpapers, gone at zero). */
   body[${ACTIVE_ATTR}] {
     --dsw-alias-bg-base: transparent;
+    --dsw-alias-settings-card-fill: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 58%, transparent);
     --dsw-specific-sidebar-fill: transparent;
   }
   /* Host border tiers above hairline read as chalk over glass: the shell
@@ -2481,6 +2482,34 @@ const CSS = `
   body[${ACTIVE_ATTR}] [data-composer-card] [class$="_primary"]:hover:not(:disabled) {
     background-color: color-mix(in srgb, var(--dsw-alias-button-info-hover) 85%, transparent);
   }
+  /* The sidebar new-session button joins the clear control tier: the same
+     recipe as the composer "+" — token colour-mix, grain + sheen, plain
+     melt (too small for the lens band), the small-control shadow stack.
+     The host .5px l3 border stays host. The shell collapsed variant must
+     keep its bare icon, so a documented-order override strips everything
+     back under a collapsed root. */
+  body[${ACTIVE_ATTR}] [class$="_newSession"] {
+    background-color: color-mix(in srgb, var(--dsw-alias-button-elevated-fill) 42%, transparent);
+    background-image: var(--webg-grain), var(--webg-sheen);
+    background-size: 140px 140px, 100% 100%;
+    -webkit-backdrop-filter: var(--webg-backdrop, blur(12px) saturate(1.5) brightness(1.04) contrast(1.01));
+    backdrop-filter: var(--webg-backdrop, blur(12px) saturate(1.5) brightness(1.04) contrast(1.01));
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, calc(0.32 * var(--webg-edge, 1))),
+      inset 0 0 0 0.5px rgba(255, 255, 255, calc(0.22 * var(--webg-border-alpha, 0.35) * var(--webg-edge, 1))),
+      0 1px 2px rgba(0, 0, 0, 0.12),
+      0 2px 8px rgba(0, 0, 0, 0.10);
+  }
+  body[${ACTIVE_ATTR}] [class$="_newSession"]:hover:not(:disabled) {
+    background-color: color-mix(in srgb, var(--dsw-alias-button-floating-hover) 65%, transparent);
+  }
+  body[${ACTIVE_ATTR}] [class*="_collapsed"] [class$="_newSession"] {
+    background-color: transparent;
+    background-image: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    box-shadow: none;
+  }
 
   /* Menu + queue-dock surface repair (wallpaper active). The shell's
      menu primitive parks fill and blur on a child layer while the
@@ -2603,31 +2632,18 @@ const CSS = `
     backdrop-filter: var(--webg-backdrop, blur(12px) saturate(1.5) brightness(1.04) contrast(1.01));
   }
 
-  /* Bottom workbench dock (dsh-better-sidebar's editor/terminal panel) —
-     the one big surface still painting an opaque bg-layer-1 slab over the
-     wallpaper. Its own settings document [data-dsh-bottom-panel] as the
-     public custom-CSS hook, so the attribute is a stable, sanctioned
-     selector. The melt rides a ::before (same containment reasoning as the
-     overlay panels: the dock hosts editor and terminal content whose
-     dropdowns must keep anchoring to the viewport). The fill is the
-     composer card's own clear-variant token — thin white translucency, the
-     same glass the input card reads — not the deep dialog tint; the panel
-     fill goes transparent, and the tab strip — which paints its own opaque
-     bg-layer-1 on top of the panel — is punched transparent too. The soft
-     panel ring replaces the old hot bevel: a full-width 1px top line read
-     as a fluorescent tube, not glass. */
+  /* Bottom workbench dock (dsh-better-sidebar's editor/terminal panel).
+     Direction: DIRECTLY TRANSPARENT — the same treatment the right side
+     gets. A half-screen blur slab reads as frosted no matter how thin the
+     fill (area decides the percept); the chat area and the right column
+     are already raw, so the dock matches them: no fill, no backdrop,
+     just the soft panel ring for separation and the punched tab strip.
+     Also exits a half-screen surface from the per-frame re-filter path.
+     Its own settings document [data-dsh-bottom-panel] as the public
+     custom-CSS hook, so the attribute is a stable, sanctioned selector. */
   body[${ACTIVE_ATTR}] [data-dsh-bottom-panel] {
     background-color: transparent;
     box-shadow: var(--webg-panel-shadow, 0 12px 40px rgba(0, 0, 0, 0.14));
-  }
-  body[${ACTIVE_ATTR}] [data-dsh-bottom-panel]::before {
-    content: ""; position: absolute; inset: 0; z-index: -1;
-    border-radius: inherit;
-    background-color: var(--dsw-specific-input-major, rgba(255, 255, 255, 0.06));
-    background-image: var(--webg-grain), var(--webg-dim-veil), var(--webg-sheen);
-    background-size: 140px 140px, 100% 100%, 100% 100%;
-    -webkit-backdrop-filter: var(--webg-backdrop, blur(12px) saturate(1.5) brightness(1.04) contrast(1.01));
-    backdrop-filter: var(--webg-backdrop, blur(12px) saturate(1.5) brightness(1.04) contrast(1.01));
   }
   body[${ACTIVE_ATTR}] [data-dsh-bottom-panel] [class$="_tabBar"],
   body[${ACTIVE_ATTR}] [data-dsh-bottom-panel] [class$="_tabBarPlus"] {
@@ -2649,10 +2665,10 @@ const CSS = `
   body[${ACTIVE_ATTR}] [class*="_dialog_"],
   body[${ACTIVE_ATTR}] [class$="_overlay"] > [class$="_panel"]:not([data-menu-material]),
   body[${ACTIVE_ATTR}] [class$="_overlay"] > [class$="_panel"]:not([data-menu-material])::before,
+  body[${ACTIVE_ATTR}] [class$="_newSession"],
   body[${ACTIVE_ATTR}] .dshRemotePage,
   body[${ACTIVE_ATTR}] .dshRemotePage::before,
   body[${ACTIVE_ATTR}] [data-dsh-bottom-panel],
-  body[${ACTIVE_ATTR}] [data-dsh-bottom-panel]::before,
   body[${ACTIVE_ATTR}] [data-dsh-bottom-panel] [class$="_tabBar"],
   body[${ACTIVE_ATTR}] .webg-adjust-bar {
       transition: background-color 180ms ease, box-shadow 180ms ease, --webg-adapt-dim 600ms ease;
@@ -2679,7 +2695,6 @@ const CSS = `
   body[${ACTIVE_ATTR}][${LENS_ATTR}] [class*="_dialog_"],
   body[${ACTIVE_ATTR}][${LENS_ATTR}] [class$="_overlay"] > [class$="_panel"]:not([data-menu-material])::before,
   body[${ACTIVE_ATTR}][${LENS_ATTR}] .dshRemotePage::before,
-  body[${ACTIVE_ATTR}][${LENS_ATTR}] [data-dsh-bottom-panel]::before,
   body[${ACTIVE_ATTR}][${LENS_ATTR}] .webg-adjust-bar {
     -webkit-backdrop-filter: var(--webg-backdrop-lens, var(--webg-backdrop, blur(12px)));
     backdrop-filter: var(--webg-backdrop-lens, var(--webg-backdrop, blur(12px)));
@@ -2713,6 +2728,7 @@ const CSS = `
       --dsw-mask-blur: none !important;
       /* !important: the lens-variant token override above carries higher
          specificity than this block's selector can match without it. */
+      --dsw-alias-settings-card-fill: var(--dsw-alias-bg-layer-2);
       --dsw-menu-backdrop-filter: none !important;
     }
     body[${ACTIVE_ATTR}] [data-composer-card],
@@ -2740,15 +2756,17 @@ const CSS = `
     body[${ACTIVE_ATTR}] [data-composer-card] [class$="_primary"]:hover:not(:disabled) {
       background-color: var(--dsw-alias-button-info-fill);
     }
+    body[${ACTIVE_ATTR}] [class$="_newSession"],
+    body[${ACTIVE_ATTR}] [class$="_newSession"]:hover:not(:disabled) {
+      background-color: var(--dsw-alias-button-elevated-fill);
+    }
     body[${ACTIVE_ATTR}] [class*="_dialog_"],
     /* Overlay window panels carry their material on a ::before layer
        (containing-block safety — see the glass section): under reduced
        transparency the whole layer is removed and the panel's own solid
-       fill above takes over. Same for the dock's melt layer and the tab
-       strip, which returns to its opaque host fill. */
+       fill above takes over. The tab strip, which returns to its opaque host fill. */
     body[${ACTIVE_ATTR}] [class$="_overlay"] > [class$="_panel"]:not([data-menu-material])::before,
-    body[${ACTIVE_ATTR}] .dshRemotePage::before,
-    body[${ACTIVE_ATTR}] [data-dsh-bottom-panel]::before {
+    body[${ACTIVE_ATTR}] .dshRemotePage::before {
       content: none;
     }
     body[${ACTIVE_ATTR}] .dshRemotePage {
@@ -2769,6 +2787,7 @@ const CSS = `
       --dsw-specific-input-major: rgba(38, 39, 44, 0.96);
       --dsw-specific-bubble: rgba(38, 39, 44, 0.94);
       --dsw-menu-surface-fill: rgba(64, 66, 71, 0.97);
+      --dsw-alias-settings-card-fill: var(--dsw-alias-bg-layer-2);
       --webg-glass-shadow:
         inset 0 0 0 1px rgba(255, 255, 255, 0.4),
         0 1px 2px rgba(0, 0, 0, 0.3),
