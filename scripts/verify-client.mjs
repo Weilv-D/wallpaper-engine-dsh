@@ -155,6 +155,16 @@ const documentMock = {
 };
 
 const timers = [];
+
+// Drain every pending sub-second timer (crossfade leave timers AND the glass
+// wake relax at 450ms — both live in the same queue): fire newest-first.
+function drainShortTimers() {
+  for (let guard = 0; guard < 8; guard++) {
+    const t = [...timers].reverse().find((x) => !x.cleared && !x.fired && x.ms < 1000);
+    if (!t) return;
+    t.fn();
+  }
+}
 // Mutable on purpose: the lens UA gate reads navigator.userAgent on every
 // applyEffects call, so the harness can flip into a Safari UA and assert the
 // gate drops the lens without a second module boot.
@@ -269,6 +279,7 @@ check('inject declares slots, locale, theme',
   JSON.stringify(exportsObj.inject) === '["slots","locale","theme"]',
   JSON.stringify(exportsObj.inject));
 check('bundle carries no legacy data-ds-dark-theme hook', !code.includes('data-ds-dark-theme'));
+check('glass wake machinery present in bundle', code.includes('function triggerGlassWake') && code.includes('triggerGlassWake();') && code.includes('glassWake ? 0.25 : 0'));
 check('Symbol.toStringTag is Module', Object.prototype.toString.call(exportsObj) === '[object Module]');
 
 // ── apply() with a mock Cordis ctx ──────────────────────────────────────────
@@ -340,17 +351,25 @@ check('style tag injected on apply', headEl.children.some((n) => n.tagName === '
       styleCss.includes('[class$="_overlay"] > [class$="_panel"]:not([data-menu-material])::before') &&
       // Host border tokens stay at host values: hijacking them outlined
       // every elevated control in chalk. The borders slider lives on the
-      // glass rims instead (both theme couplings present), and the strong
+      // glass rims instead (dark ring 0.51 + dark contour 0.18), and the strong
       // l2/l3/l4 tiers step down a notch over glass.
-      styleCss.includes('calc(0.34 * var(--webg-border-alpha') &&
+      styleCss.includes('calc(0.18 * var(--webg-border-alpha') &&
       styleCss.includes('calc(0.51 * var(--webg-border-alpha') &&
       !styleCss.includes('--dsw-alias-border-l1: rgba(180') &&
       styleCss.includes('--dsw-alias-border-l4: rgba(255, 255, 255, 0.13)') &&
       // Clear glass (composer) keeps the hot asymmetric bevel; the regular
       // family (menus, dialogs, docks, pages) gets the quiet panel stack.
       styleCss.includes('--webg-panel-shadow:') &&
-      styleCss.includes('calc(0.20 * var(--webg-border-alpha') &&
+      styleCss.includes('0 4px 14px') &&
       styleCss.includes('calc(0.28 * var(--webg-border-alpha') &&
+      // Dark-pinned material + fluidity: @property layer, wake-driven
+      // transition tokens and the adjust-bar entrance.
+      styleCss.includes('@property --webg-edge') &&
+      styleCss.includes('@property --webg-adapt-dim') &&
+      styleCss.includes('--webg-adapt-dim 600ms ease') &&
+      styleCss.includes('--webg-edge 700ms ease') &&
+      styleCss.includes('@keyframes webg-bar-in') &&
+      styleCss.includes('rgba(213, 229, 255') &&
       styleCss.includes('box-shadow: var(--webg-panel-shadow') &&
       // The dock melts on the composer's own clear fill, not a deep tint.
       styleCss.includes('background-color: var(--dsw-specific-input-major, rgba(255, 255, 255, 0.06))') &&
@@ -400,28 +419,28 @@ setTimeout(async () => {
   const props = bodyEl.style._props;
   // The veil OPPOSES the text colour: light theme (dark text) veils WHITE,
   // dark theme (light text) veils BLACK — readable over any wallpaper.
-  check('scrim veil is white in light theme', props['--webg-scrim-color'] === 'rgba(255,255,255,0.25)',
+  check('scrim veil is black (material dark-pinned)', props['--webg-scrim-color'] === 'rgba(0,0,0,0.25)',
     props['--webg-scrim-color']);
-  check('glass blur css var default', props['--webg-blur'] === '12px', props['--webg-blur']);
+  check('glass blur css var default', props['--webg-blur'] === '8px', props['--webg-blur']);
   check('media filter is none at zero blur (bit-exact pixels)', props['--webg-media-filter'] === 'none',
     props['--webg-media-filter']);
   check('noise overlay hidden at zero blur', props['--webg-noise-display'] === 'none',
     props['--webg-noise-display']);
   // Glass chain: one var feeds every surface; the lens variant prefixes the
   // displacement filter (Chromium UA + mock canvas ⇒ lens is live here).
-      // 12px default sits in the liquid zone; vibrancy is constant 1.5.
+      // 8px default sits in the liquid zone; vibrancy is constant 1.5.
   check('backdrop chain var default (liquid-zone blur, host vibrancy)',
-    props['--webg-backdrop'] === 'blur(12px) saturate(1.5) brightness(1.04) contrast(1.01)',
+    props['--webg-backdrop'] === 'blur(8px) saturate(1.5) brightness(1.04) contrast(1.01)',
     props['--webg-backdrop']);
   check('lens chain appends the displacement filter (melt first, bend last)',
     props['--webg-backdrop-lens'] === props['--webg-backdrop'] + ' url(#webg-lens)',
     props['--webg-backdrop-lens']);
   check('edge specular strength rides the glass slider',
-    props['--webg-edge'] === '0.88', props['--webg-edge']);
+    props['--webg-edge'] === '0.82', props['--webg-edge']);
   check('adapt-dim idle at zero luminance evidence',
-    props['--webg-adapt-dim'] === 'rgba(255,255,255,0)', props['--webg-adapt-dim']);
+    props['--webg-adapt-dim'] === 'rgba(0,0,0,0)', props['--webg-adapt-dim']);
   check('menu fill sits at glass level at the default blur',
-    props['--webg-menu-fill-alpha'] === '0.78', props['--webg-menu-fill-alpha']);
+    props['--webg-menu-fill-alpha'] === '0.72', props['--webg-menu-fill-alpha']);
   check('lens svg defs mounted under body',
     Boolean(documentMock.getElementById('wallpaper-engine-dsh-lens')));
   check('body lens gate attribute set', bodyEl.attributes['data-webg-lens'] === '');
@@ -436,7 +455,7 @@ setTimeout(async () => {
         filter.children[0].attributes.preserveAspectRatio === 'none' &&
         filter.children[0].attributes.href === 'data:image/png;base64,TEVOU01BUA==' &&
         filter.children[1].tagName === 'FEDISPLACEMENTMAP' &&
-        filter.children[1].attributes.scale === '24',
+        filter.children[1].attributes.scale === '28',
       filter ? 'filter present' : 'filter missing');
   }
 
@@ -459,8 +478,7 @@ setTimeout(async () => {
       frame && frame.attributes.sandbox);
     check('iframe sends no referrer', frame && frame.attributes.referrerpolicy === 'no-referrer');
 
-    const leaveTimer = [...timers].reverse().find((t) => !t.cleared && t.ms < 1000);
-    if (leaveTimer) leaveTimer.fn();
+        drainShortTimers(); // fires the leave timer AND any glass-wake relax
     check('leaving layer removed after crossfade', documentMock.querySelectorAll('.webg-layer').length === 1);
 
     const wrapTimer = [...timers].reverse().find((t) => !t.cleared && t.ms === 300000);
@@ -469,8 +487,7 @@ setTimeout(async () => {
       check('rotation wraps back to a',
         JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']).id === 'a');
       // Settle the b→a crossfade so later layer-count checks start clean.
-      const wrapLeave = [...timers].reverse().find((t) => !t.cleared && t.ms < 1000);
-      if (wrapLeave) wrapLeave.fn();
+            drainShortTimers();
     }
   }
 
@@ -500,8 +517,7 @@ setTimeout(async () => {
       check('web card found in the grid', Boolean(webCard));
       if (webCard) {
         webCard.props.onClick();
-        let settle = [...timers].reverse().find((t) => !t.cleared && !t.fired && t.ms < 1000);
-        if (settle) settle.fn();
+                drainShortTimers();
         const webTree = pickerRenders[0]();
         const webButtons = collectButtons(webTree);
         check('web wallpaper keeps the crop-adjust button',
@@ -522,8 +538,7 @@ setTimeout(async () => {
         const backToVideo = cardByTitle(webButtons, 'Video A');
         if (backToVideo) {
           backToVideo.props.onClick();
-          settle = [...timers].reverse().find((t) => !t.cleared && !t.fired && t.ms < 1000);
-          if (settle) settle.fn();
+                    drainShortTimers();
         }
       }
     }
@@ -793,17 +808,20 @@ setTimeout(async () => {
       check('border slider clamps a persisted 1.0 to its 90 ceiling',
         sliders[2].props.value === '90', sliders[2].props.value);
       const scrimSlider = sliders[1]; // 壁纸模糊, 暗化, 边框, 玻璃
+      // Material dark-pinned: theme flips must leave the veil and the
+      // mirror untouched — one glass recipe regardless of shell/OS theme.
       emitTheme(true);
       scrimSlider.props.onChange({ target: { value: '25', style: { setProperty() {} } } });
-      check('veil flips to black in dark theme',
+      check('veil stays black under a dark-theme snapshot',
         bodyEl.style._props['--webg-scrim-color'] === 'rgba(0,0,0,0.25)',
         bodyEl.style._props['--webg-scrim-color']);
-      check('dark theme mirrors body[data-webg-dark]', bodyEl.attributes['data-webg-dark'] === '');
+      check('dark mirror always set (dark-pinned)', bodyEl.attributes['data-webg-dark'] === '');
       emitTheme(false);
       scrimSlider.props.onChange({ target: { value: '25', style: { setProperty() {} } } });
-      check('veil returns to white in light theme',
-        bodyEl.style._props['--webg-scrim-color'] === 'rgba(255,255,255,0.25)');
-      check('light theme clears the dark mirror', bodyEl.attributes['data-webg-dark'] === undefined);
+      check('theme flip leaves the veil black (no light branch)',
+        bodyEl.style._props['--webg-scrim-color'] === 'rgba(0,0,0,0.25)',
+        bodyEl.style._props['--webg-scrim-color']);
+      check('dark mirror stays set under light theme', bodyEl.attributes['data-webg-dark'] === '');
 
       // Blur>0 complement of the fast path: the filter pipeline engages and
       // the noise overlay comes back with its formula-driven opacity.
@@ -900,28 +918,16 @@ setTimeout(async () => {
         check('dark frame drops the clear-variant dim to zero',
           bodyEl.style._props['--webg-adapt-dim'] === 'rgba(0,0,0,0)',
           bodyEl.style._props['--webg-adapt-dim']);
+        // Theme flips stay inert over the same frame: the light branch is
+        // gone — same black veil, no white flip, no hue tint, dim stays black.
         emitTheme(false);
         liveVideo._listeners.loadeddata();
-        check('dark frame in LIGHT theme raises the white veil to 0.5',
-          bodyEl.style._props['--webg-scrim-color'] === 'rgba(255,255,255,0.5)',
+        check('theme flip leaves the veil black over the same frame',
+          bodyEl.style._props['--webg-scrim-color'] === 'rgba(0,0,0,0.25)',
           bodyEl.style._props['--webg-scrim-color']);
-        check('light theme veils white: dim flips to the white side',
-          bodyEl.style._props['--webg-adapt-dim'] === 'rgba(255,255,255,0.35)',
+        check('dim stays black under light-theme snapshot',
+          bodyEl.style._props['--webg-adapt-dim'] === 'rgba(0,0,0,0)',
           bodyEl.style._props['--webg-adapt-dim']);
-        // Light-theme veil tint: the sampled average colour — hue only,
-        // normalised to full value — mixes into white at 18%, so the frost
-        // reads as this scene's glass rather than a dead grey sheet.
-        // Blue frame (40,80,160): lum ≈ 0.30 → user 0.25 floor stands;
-        // max channel 160 normalises to 255 → veil rgba(221,232,255,0.25).
-        const blue = new Uint8Array(16 * 16 * 4);
-        for (let i = 0; i < blue.length; i += 4) {
-          blue[i] = 40; blue[i + 1] = 80; blue[i + 2] = 160; blue[i + 3] = 255;
-        }
-        mockCanvasPixels = blue;
-        liveVideo._listeners.loadeddata();
-        check('light-theme veil borrows the wallpaper hue (tinted white, not grey)',
-          bodyEl.style._props['--webg-scrim-color'] === 'rgba(221,232,255,0.25)',
-          bodyEl.style._props['--webg-scrim-color']);
         mockCanvasPixels = null;
       }
     }
@@ -951,14 +957,12 @@ setTimeout(async () => {
         check('stale error keeps the iframe layer intact',
           Boolean(liveLayer && liveLayer.children[0] && liveLayer.children[0].tagName === 'IFRAME'));
         // Settle the crossfade, then switch back so later blocks start clean.
-        let staleSettle = [...timers].reverse().find((t) => !t.cleared && !t.fired && t.ms < 1000);
-        if (staleSettle) staleSettle.fn();
+                drainShortTimers();
         const videoCardBack = cardByTitle(collectButtons(pickerRenders[0]()), 'Video A');
         check('video card available to switch back', Boolean(videoCardBack));
         if (videoCardBack) {
           videoCardBack.props.onClick();
-          staleSettle = [...timers].reverse().find((t) => !t.cleared && !t.fired && t.ms < 1000);
-          if (staleSettle) staleSettle.fn();
+                    drainShortTimers();
         }
       }
     }
@@ -1118,8 +1122,8 @@ setTimeout(async () => {
           emitTheme(false);
           mockCanvasPixels = new Uint8Array(16 * 16 * 4); // black preview
           probe._listeners.load();
-          check('black preview raises the light-theme veil to 0.5',
-            bodyEl.style._props['--webg-scrim-color'] === 'rgba(255,255,255,0.5)',
+          check('black preview stays at the user floor (dark-pinned, no floor on the dark side)',
+            bodyEl.style._props['--webg-scrim-color'] === 'rgba(0,0,0,0.25)',
             bodyEl.style._props['--webg-scrim-color']);
           emitTheme(true);
           mockCanvasPixels = new Uint8Array(16 * 16 * 4).fill(255); // bright preview

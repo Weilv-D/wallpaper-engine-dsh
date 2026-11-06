@@ -268,7 +268,7 @@ function S() {
 const DEFAULTS = {
   scrim: 0.25,
   border: 0.35,
-  blur: 12,
+  blur: 8, // liquid zone: clearest band of the melt
   wallpaperBlur: 0,
   rotationEnabled: false,
   rotationInterval: 30,
@@ -666,9 +666,29 @@ function importPlaylistIntoDraft(playlist) {
   selection.editing.wallpaperIds = [...new Set(playlist.wallpaperIds.filter((id) => usable.has(id)))];
   emit();
 }
-
+// One-shot glass wake on a wallpaper switch: bump the registered --webg-edge
+// by 0.25 for a beat, then relax. applyEffects folds the bump into its edge
+// write; nulling the change key forces both passes through despite the key
+// guard. Skipped under prefers-reduced-motion AND without a timer host (the
+// verify sandbox) — a wake without a scheduled relax would wedge --webg-edge
+// at the swollen value.
+function triggerGlassWake() {
+  if (REDUCED_MOTION) return;
+  const sched = typeof window !== "undefined" && typeof window.setTimeout === "function" ? window : null;
+  if (!sched) return;
+  glassWake = true;
+  lastEffectKey = null;
+  applyEffects();
+  if (glassWakeTimer) sched.clearTimeout(glassWakeTimer);
+  glassWakeTimer = sched.setTimeout(() => {
+    glassWake = false;
+    lastEffectKey = null;
+    applyEffects();
+  }, 450);
+}
 function applySelection(id) {
   if (selection.adjusting) exitAdjust();
+  const prevId = selection.id;
   selection.id = id || "";
   persistSelection();
   const w = selection.id
@@ -692,6 +712,9 @@ function applySelection(id) {
   }
   syncRotationTimer();
   emit();
+  // Wallpaper switched to a DIFFERENT id: one glass wake (rim-light swell,
+  // triggerGlassWake above). Same-id re-applies (refresh reissue) never wake.
+  if (selection.id && selection.id !== prevId) triggerGlassWake();
 }
 
 // ── Auto-pause (resource monitor) ───────────────────────────────────────────
@@ -1196,8 +1219,12 @@ function syncLayers() {
 // brightness proxy (see probePreviewLuminance).
 let sampledLuminance = null;
 // Average frame colour (0..255 channels) sampled alongside the luminance;
-// feeds the light theme's wallpaper-tinted veil.
+// quantises into the effect change key (16-level colour buckets).
 let sampledColor = null;
+// Wallpaper-switch wake state: while true, applyEffects writes --webg-edge
+// with a +0.25 swell folded in; triggerGlassWake clears it after 450ms.
+let glassWake = false;
+let glassWakeTimer = 0;
 let sampleCanvas = null;
 // Snapshot of every input applyEffects reads, from its last full write. The
 // store emits once per second for the FPS readout — without this guard every
@@ -1314,7 +1341,7 @@ function buildLensMap(size) {
         // Rounded-rect signed distance: negative inside, 0 at the shape edge
         // (which is the canvas edge — the filter region extends past it).
         const rad = size * 0.05;   // corner radius ≈ 5% of the surface
-        const band = size * 0.07;  // refraction band ≈ 7% of the surface
+        const band = size * 0.085;  // refraction band ≈ 8.5% of the surface — the lens signature
         const cx = size / 2;
         const sdf = (x, y) => {
           const qx = Math.abs(x - cx) - (cx - 1 - rad);
@@ -1400,7 +1427,7 @@ function ensureLensDefs() {
   const disp = document.createElementNS(SVG_NS, "feDisplacementMap");
   disp.setAttribute("in", "SourceGraphic");
   disp.setAttribute("in2", "map");
-  disp.setAttribute("scale", "24");
+  disp.setAttribute("scale", "28");
   disp.setAttribute("xChannelSelector", "R");
   disp.setAttribute("yChannelSelector", "G");
   filter.appendChild(image);
@@ -1411,10 +1438,11 @@ function ensureLensDefs() {
 }
 
 function applyEffects() {
-  // The veil OPPOSES the text colour: dark theme (light text) darkens bright
-  // wallpapers, light theme (dark text) brightens dark ones — either way the
-  // text side wins. This is what makes ANY wallpaper survivable.
-  const dark = themeDark;
+  // The veil darkens bright wallpapers (the dark material serves light text —
+  // this is what makes ANY wallpaper survivable).
+  // Material permanently dark (user decision, 2026-11-06): one glass recipe
+  // regardless of shell/OS theme; the light branch is retired.
+  const dark = true;
   if (typeof document !== "undefined" && document.body) {
     if (dark) {
       if (!(document.body.hasAttribute && document.body.hasAttribute(DARK_ATTR))) {
@@ -1474,31 +1502,17 @@ function applyEffects() {
   let alpha = selection.scrim;
   if (selection.autoScrim && sampledLuminance !== null) {
     // Distance of the wallpaper's brightness from the "comfortable middle"
-    // towards the text colour's weakness, mapped to a veil-alpha floor.
     const need = dark
       ? Math.min(0.55, Math.max(0, sampledLuminance - 0.5))
       : Math.min(0.55, Math.max(0, 0.5 - sampledLuminance));
     alpha = Math.max(alpha, Math.round(need * 1000) / 1000);
   }
-  // The dark veil stays pure black — deep, rich, what night mode is liked
-  // for. The light veil used to be pure white, which over a dark wallpaper
-  // composites into a dead neutral grey wall. It now borrows the wallpaper's
-  // own hue: the sample's average colour is normalised to full value (max
-  // channel → 255, so only the hue/chroma survive, never the darkness) and
-  // mixed into white at a fixed 18%. Black text still meets a high-lightness
-  // field, but the frost reads as this scene's glass, not a grey sheet.
-  // No colour evidence (web probe pending, no canvas) → the neutral white.
-  let veilRgb = "255,255,255";
-  if (!dark && sampledColor) {
-    const max = Math.max(sampledColor.r, sampledColor.g, sampledColor.b);
-    if (max > 8) {
-      const t = 0.18;
-      const k = 255 / max;
-      const mix = (ch) => Math.round(255 * (1 - t) + Math.min(255, ch * k) * t);
-      veilRgb = mix(sampledColor.r) + "," + mix(sampledColor.g) + "," + mix(sampledColor.b);
-    }
-  }
-  const veilColor = "rgba(" + (dark ? "0,0,0" : veilRgb) + "," + alpha + ")";
+  // The veil is pure black, always — the dark material needs no light-side
+  // flip, no hue tint, nothing. A pitch-black wallpaper still cannot swallow
+  // the UI: black-on-black is exactly the case the autoScrim floor above
+  // cannot help with... and it does not need to: dark text is not what this
+  // material serves (see the dark-pin note at the top of applyEffects).
+  const veilColor = "rgba(0,0,0," + alpha + ")";
   s.setProperty("--webg-scrim-color", veilColor);
   s.setProperty("--webg-border-alpha", String(selection.border));
   s.setProperty("--webg-blur", selection.blur + "px");
@@ -1510,28 +1524,21 @@ function applyEffects() {
   // glass and the host's frosted chrome read as one system.
   const saturate = 1.5;
   // Adaptive luminosity — Apple's material self-adjusts to the content
-  // behind it: a bright wallpaper dims the glass a touch, a dark one lifts
-  // it, keeping the tint side of the ledger stable either way. No
-  // luminance evidence (null, e.g. before the first sample lands) → the
-  // neutral constant. Light theme pulls gentler: its dark text already
-  // survives bright glass.
+  // behind it: a bright wallpaper dims the melt a touch, a dark one lifts
+  // it a whisper (a full lift turned near-black backdrops into grey smoke —
+  // the opposite of the clear read Apple's dark glass keeps). No luminance
+  // evidence (null, before the first sample) → the neutral 1.04 base.
   let glassBright = 1.04;
   if (sampledLuminance !== null) {
     // Asymmetric on purpose: bright content may DIM the melt (that helps
-    // the theme's text), but dark content earns only a whisper of lift —
-    // a full lift turned near-black backdrops into grey smoke, the
-    // opposite of the clear read Apple's dark glass keeps (it stays dark
-    // and lets the edge light carry the shape).
-    const pull = Math.max(0, sampledLuminance - 0.5) * (dark ? 0.16 : 0.12);
+    // the light text), but dark content earns only a whisper of lift.
+    const pull = Math.max(0, sampledLuminance - 0.5) * 0.16;
     const lift = Math.max(0, 0.5 - sampledLuminance) * 0.04;
     glassBright = Math.round(Math.max(0.94, Math.min(1.12, 1.04 - pull + lift)) * 1000) / 1000;
   }
   // glass-brightness stays a standalone knob for inspection even though the
-  // chain below embeds it — it is the one value NOT derivable from the
-  // slider settings (it rides the luminance sampler).
+  // chain below embeds it — the one value NOT derivable from the sliders.
   s.setProperty("--webg-glass-brightness", String(glassBright));
-  // One chain, written once, consumed by every glass surface. The five
-  // hand-copied backdrop-filter declarations used to drift apart on edits.
   // At 0 blur the chain collapses to none: surfaces fall back to their
   // translucent token fills and the filter pipeline drops out entirely —
   // the same bit-exact fast path the wallpaper media layer uses.
@@ -1550,7 +1557,7 @@ function applyEffects() {
   // Edge specular strength grows with the glass slider — Apple: thicker
   // material catches more light. The 0.70 floor keeps a whisper of bevel
   // at 0 blur, where the fill is still translucent glass.
-  s.setProperty("--webg-edge", (0.7 + selection.blur * 0.015).toFixed(2));
+  s.setProperty("--webg-edge", (0.7 + selection.blur * 0.015 + (glassWake ? 0.25 : 0)).toFixed(2));
   // Clear-variant adaptive dimming (composer + bubbles float over the media
   // like Apple's "clear" glass): when the wallpaper's brightness threatens
   // the theme's text, an extra veil layer INSIDE the glass tips the balance
@@ -1563,10 +1570,13 @@ function applyEffects() {
     const need = dark
       ? Math.max(0, sampledLuminance - 0.5)
       : Math.max(0, 0.5 - sampledLuminance);
+    // 0.7 slope, 0.35 HIG ceiling: the dim tips the balance back only when
+    // the scene actually threatens the light text; 0-alpha keeps the
+    // background-image stack stable for compositing.
     dimAlpha = Math.round(Math.min(0.35, need * 0.7) * 1000) / 1000;
   }
   s.setProperty("--webg-adapt-dim",
-    "rgba(" + (dark ? "0,0,0" : "255,255,255") + "," + dimAlpha + ")");
+    "rgba(0,0,0," + dimAlpha + ")");
   // Menu fill rides the blur slider too. The old flat 0.85 grey was a
   // crutch from when the menus' blur was broken; with the chain working,
   // legibility at usable blur is carried by the melt and the fill steps
@@ -2322,7 +2332,7 @@ const CSS = `
     position: fixed; inset: 0; z-index: -1;
     pointer-events: none;
     background: var(--webg-scrim-color, rgba(0, 0, 0, 0.25));
-    transition: background 120ms linear;
+    transition: background 300ms ease;
   }
 
   /* While active: transparent frame + sidebar. The host's border tokens
@@ -2345,27 +2355,12 @@ const CSS = `
      l2-darkmode-thin) keep host values. Measured anchor: the settings
      account cards draw a 1px white-0.20 (l4) stroke that read as a bright
      frame over the glass panel. */
-  body[${ACTIVE_ATTR}]:not([${DARK_ATTR}]) {
-    --dsw-alias-border-l2: rgba(0, 0, 0, 0.07);
-    --dsw-alias-border-l3: rgba(0, 0, 0, 0.08);
-    --dsw-alias-border-l4: rgba(0, 0, 0, 0.11);
-  }
-  body[${DARK_ATTR}][${ACTIVE_ATTR}] {
+  body[${ACTIVE_ATTR}] {
     --dsw-alias-border-l2: rgba(255, 255, 255, 0.08);
     --dsw-alias-border-l3: rgba(255, 255, 255, 0.10);
     --dsw-alias-border-l4: rgba(255, 255, 255, 0.13);
   }
 
-  /* Light-scheme text ramp: grays were tuned against a near-white page and
-     lose contrast over busy wallpapers — push them darker while active. */
-  body[${ACTIVE_ATTR}]:not([${DARK_ATTR}]) {
-    --dsw-alias-label-primary: rgb(0, 0, 0);
-    --dsw-alias-label-primary-dimmed: rgb(10, 10, 12);
-    --dsw-alias-label-secondary: rgb(40, 42, 46);
-    --dsw-alias-label-tertiary: rgb(70, 73, 79);
-    --dsw-alias-label-caption: rgb(110, 114, 120);
-    --dsw-alias-label-dimmed: rgb(50, 52, 56);
-  }
 
   /* ── Liquid glass material ─────────────────────────────────────────────
      Apple's material (HIG Materials, WWDC25 sessions 219/356) reads as
@@ -2401,60 +2396,38 @@ const CSS = `
   body[${ACTIVE_ATTR}] {
     --webg-grain: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="140" height="140"><filter id="g"><feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="2" stitchTiles="stitch" seed="7"/><feColorMatrix type="matrix" values="0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0.035 0"/></filter><rect width="140" height="140" filter="url(%23g)"/></svg>');
     --webg-dim-veil: linear-gradient(var(--webg-adapt-dim, rgba(0, 0, 0, 0)), var(--webg-adapt-dim, rgba(0, 0, 0, 0)));
-    /* Day glass must read as BRIGHT glass: a stronger sheen (0.13 top) and
-       whiter fills lift the surfaces above the tinted veil, instead of the
-       old thin fill that just inherited the backdrop's grey. */
-    --webg-sheen: linear-gradient(165deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.04) 20%, rgba(255, 255, 255, 0.008));
-    /* Light-theme edge stack: top bevel → thickness glow (fake subsurface
-       scatter under the bevel) → bottom catch → hairline ring → contact
-       seam under the rim → key + ambient drop shadow. The ring rides the
-       borders slider (0.34 × alpha × edge reproduces the old fixed 0.12 at
-       the 0.35 slider default; the ceiling triples it for busy wallpapers;
-       zero removes the rim, leaving the bevels). */
-    --webg-glass-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, calc(0.40 * var(--webg-edge, 1))),
-      inset 0 2px 10px -4px rgba(255, 255, 255, calc(0.26 * var(--webg-edge, 1))),
-      inset 0 -1px 0 rgba(255, 255, 255, calc(0.12 * var(--webg-edge, 1))),
-      inset 0 0 0 0.5px rgba(255, 255, 255, calc(0.34 * var(--webg-border-alpha, 0.35) * var(--webg-edge, 1))),
-      0 1px 0 rgba(0, 0, 0, calc(0.05 * var(--webg-edge, 1))),
-      0 1px 2px rgba(0, 0, 0, 0.06),
-      0 12px 40px rgba(0, 0, 0, 0.14);
-    /* Regular-material surfaces (menus, dialogs, the docks, full pages) get
-       their own, much quieter stack — a soft hairline ring and drop shadows,
-       no top bevel. A hot 1px bevel belongs to small clear glass; stretched
-       across a 900px panel it reads as a fluorescent tube (the user-visible
-       "bright line"), not a lens. The ring still rides the borders slider. */
-    --webg-panel-shadow:
-      inset 0 0 0 0.5px rgba(255, 255, 255, calc(0.20 * var(--webg-border-alpha, 0.35) * var(--webg-edge, 1))),
-      0 1px 2px rgba(0, 0, 0, 0.06),
-      0 12px 40px rgba(0, 0, 0, 0.14);
-    /* Clear-variant fills ride the host tokens the surfaces already read;
-       backdrop-filter still needs element selectors ([data-composer-card]
-       is authored in the shell source and survives rebuilds; bubbles fall
-       back to the module-CSS suffix convention and degrade gracefully). */
-    --dsw-specific-input-major: rgba(255, 255, 255, 0.22);
-    --dsw-specific-bubble: rgba(255, 255, 255, 0.17);
   }
-  body[${DARK_ATTR}][${ACTIVE_ATTR}] {
-    /* Dark theme: tighter top-left hotspot, and the top bevel brightens
-       (over dark wallpapers the luminous edge is what carries the shape);
-       the contact seam goes — dark-on-dark — and the ambient deepens
-       because the fill itself is ~3x thinner. Night mode keeps its look;
-       only the ring picks up the borders slider (0.51 × alpha × edge ≈ the
-       old fixed 0.18 at the slider default). */
+
+  /* Registered custom properties: the fluidity layer. --webg-edge (glass
+     thickness, drives every bevel/ring/contour via calc) and --webg-adapt-dim
+     (the adaptive dim layer) are transitionable, so slider moves, theme-adjacent
+     re-writes and the wallpaper-switch wake glide instead of snapping.
+     Engines without @property keep today's stepwise behaviour. */
+  @property --webg-edge { syntax: '<number>'; inherits: true; initial-value: 1; }
+  @property --webg-adapt-dim { syntax: '<color>'; inherits: true; initial-value: rgba(0, 0, 0, 0); }
+  /* Material permanently dark (user decision, 2026-11-06): one glass recipe,
+     whatever the shell or OS theme says. The stack: 155° sheen → hot top
+     bevel → cool subsurface glow (dispersion hint) → bottom catch → hairline
+     ring + dark outer contour (the thickness sandwich, both riding the
+     borders slider) → near + ambient drops. */
+  body[${ACTIVE_ATTR}] {
     --webg-sheen: linear-gradient(155deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02) 18%, rgba(255, 255, 255, 0.005));
     --webg-glass-shadow:
       inset 0 1px 0 rgba(255, 255, 255, calc(0.56 * var(--webg-edge, 1))),
-      inset 0 2px 10px -4px rgba(255, 255, 255, calc(0.22 * var(--webg-edge, 1))),
+      inset 0 2px 10px -4px rgba(213, 229, 255, calc(0.22 * var(--webg-edge, 1))),
       inset 0 -1px 0 rgba(255, 255, 255, calc(0.12 * var(--webg-edge, 1))),
       inset 0 0 0 0.5px rgba(255, 255, 255, calc(0.51 * var(--webg-border-alpha, 0.35) * var(--webg-edge, 1))),
+      0 0 0 0.5px rgba(0, 0, 0, calc(0.18 * var(--webg-border-alpha, 0.35) * var(--webg-edge, 1))), /* dark contour */
       0 1px 2px rgba(0, 0, 0, 0.2),
       0 12px 40px rgba(0, 0, 0, 0.32);
+
     /* Night panels: same quiet recipe — the luminous edge on dark glass is
        carried by the fill and the melt, not a hot top line. */
     --webg-panel-shadow:
       inset 0 0 0 0.5px rgba(255, 255, 255, calc(0.28 * var(--webg-border-alpha, 0.35) * var(--webg-edge, 1))),
+      0 0 0 0.5px rgba(0, 0, 0, calc(0.18 * var(--webg-border-alpha, 0.35) * var(--webg-edge, 1))), /* dark contour */
       0 1px 2px rgba(0, 0, 0, 0.2),
+      0 4px 14px rgba(0, 0, 0, 0.18), /* mid drop */
       0 12px 40px rgba(0, 0, 0, 0.32);
     --dsw-specific-input-major: rgba(255, 255, 255, 0.045);
     --dsw-specific-bubble: rgba(255, 255, 255, 0.04);
@@ -2523,7 +2496,6 @@ const CSS = `
      earlier "menus keep the shell's chrome" caution predates the
      material system, and flat grey read as a dead panel, not glass. */
   body[${ACTIVE_ATTR}] { --dsw-menu-surface-fill: rgba(67, 69, 74, var(--webg-menu-fill-alpha, 0.72)); }
-  body[${ACTIVE_ATTR}]:not([${DARK_ATTR}]) { --dsw-menu-surface-fill: rgba(248, 249, 250, var(--webg-menu-fill-alpha, 0.78)); }
   body[${ACTIVE_ATTR}] [data-menu-material],
   body[${ACTIVE_ATTR}] [data-composer-dock] [class*="_panel"] {
     background-image: var(--webg-grain), var(--webg-dim-veil), var(--webg-sheen);
@@ -2661,10 +2633,14 @@ const CSS = `
   body[${ACTIVE_ATTR}] [data-dsh-bottom-panel] [class$="_tabBarPlus"] {
     background-color: transparent;
   }
-
-  /* Theme flips and slider-driven edge changes ease in instead of
-     popping. Only tint+shadow properties; the shell's own transform and
-     opacity motion (menus, dialogs) is untouched. */
+  /* Motion: everything here is gated by prefers-reduced-motion. The wake
+     (see triggerGlassWake) swells the registered --webg-edge once per
+     wallpaper switch; webg-bar-in springs the crop bar in; the registered
+     custom properties make edge/dim changes glide instead of snapping. */
+  @keyframes webg-bar-in {
+    from { opacity: 0; transform: translateY(6px) scale(0.98); }
+    to { opacity: 1; transform: none; }
+  }
   @media (prefers-reduced-motion: no-preference) {
     body[${ACTIVE_ATTR}] [data-composer-card],
     body[${ACTIVE_ATTR}] [class*="_bubble"],
@@ -2679,8 +2655,11 @@ const CSS = `
   body[${ACTIVE_ATTR}] [data-dsh-bottom-panel]::before,
   body[${ACTIVE_ATTR}] [data-dsh-bottom-panel] [class$="_tabBar"],
   body[${ACTIVE_ATTR}] .webg-adjust-bar {
-      transition: background-color 180ms ease, box-shadow 180ms ease;
+      transition: background-color 180ms ease, box-shadow 180ms ease, --webg-adapt-dim 600ms ease;
     }
+    /* Glass thickness glides: the registered --webg-edge eases instead of snapping. */
+    body { transition: --webg-edge 700ms ease; }
+    .webg-adjust-bar { animation: webg-bar-in 240ms ease-out backwards; }
   }
 
   /* Edge refraction — the lensing signature (Chromium only; the UA gate
@@ -2711,10 +2690,8 @@ const CSS = `
      palette). Blend the wallpaper up into it with a short fade from
      the overlay's own colour (dark #1b1b1c / light #f9fafb), scoped
      to the desktop marker html[data-windows-titlebar] (absent in
-     browsers) and off in fullscreen. Pure CSS: the fill var flips
-     with the plugin dark mirror attribute, no JS involved. */
-  body[${DARK_ATTR}] { --webg-titlebar-fill: #1b1b1c; }
-  body:not([${DARK_ATTR}]) { --webg-titlebar-fill: #f9fafb; }
+     browsers) and off in fullscreen. The fade is dark, always.
+  body { --webg-titlebar-fill: #1b1b1c; }
   html[data-windows-titlebar]:not([data-fullscreen]) body[${ACTIVE_ATTR}] .webg-scrim::before {
     content: ""; position: absolute; top: 0; left: 0; right: 0;
     height: var(--dsh-windows-titlebar-height, 40px);
@@ -2736,13 +2713,6 @@ const CSS = `
       --dsw-mask-blur: none !important;
       /* !important: the lens-variant token override above carries higher
          specificity than this block's selector can match without it. */
-      --dsw-menu-backdrop-filter: none !important;
-    }
-    body[${ACTIVE_ATTR}]:not([${DARK_ATTR}]) {
-      --dsw-specific-input-major: #f8f9fa;
-      --dsw-specific-bubble: #f4f5f6;
-      --dsw-menu-surface-fill: #f8f9fa;
-      --dsw-mask-blur: none !important;
       --dsw-menu-backdrop-filter: none !important;
     }
     body[${ACTIVE_ATTR}] [data-composer-card],
@@ -2795,7 +2765,7 @@ const CSS = `
      the fills go near-opaque and the hairline ring steps up to a real
      border so text contrast no longer depends on the backdrop. */
   @media (prefers-contrast: more) {
-    body[${DARK_ATTR}][${ACTIVE_ATTR}] {
+    body[${ACTIVE_ATTR}] {
       --dsw-specific-input-major: rgba(38, 39, 44, 0.96);
       --dsw-specific-bubble: rgba(38, 39, 44, 0.94);
       --dsw-menu-surface-fill: rgba(64, 66, 71, 0.97);
@@ -2807,19 +2777,6 @@ const CSS = `
         inset 0 0 0 1px rgba(255, 255, 255, 0.4),
         0 1px 2px rgba(0, 0, 0, 0.3),
         0 12px 40px rgba(0, 0, 0, 0.35);
-    }
-    body[${ACTIVE_ATTR}]:not([${DARK_ATTR}]) {
-      --dsw-specific-input-major: rgba(248, 249, 250, 0.97);
-      --dsw-specific-bubble: rgba(244, 245, 246, 0.95);
-      --dsw-menu-surface-fill: rgba(248, 249, 250, 0.98);
-      --webg-glass-shadow:
-        inset 0 0 0 1px rgba(0, 0, 0, 0.45),
-        0 1px 2px rgba(0, 0, 0, 0.1),
-        0 12px 40px rgba(0, 0, 0, 0.16);
-      --webg-panel-shadow:
-        inset 0 0 0 1px rgba(0, 0, 0, 0.45),
-        0 1px 2px rgba(0, 0, 0, 0.1),
-        0 12px 40px rgba(0, 0, 0, 0.16);
     }
   }
 
@@ -3170,6 +3127,10 @@ function apply(ctx) {
         sampledLuminance = null;
         sampledColor = null;
         if (previewProbe) { previewProbe.remove(); previewProbe = null; }
+        if (glassWakeTimer && typeof window !== "undefined" && typeof window.clearTimeout === "function") {
+          window.clearTimeout(glassWakeTimer);
+          glassWakeTimer = 0; glassWake = false;
+        }
         clearRotationTimer();
         // Cancel pending crossfade/clear timers so they never fire on
         // torn-down nodes after dispose.
