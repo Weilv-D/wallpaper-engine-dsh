@@ -2444,18 +2444,45 @@ const CSS = `
      container ([class$="_overlay"] > [class$="_panel"]): the settings
      window and lightbox panels are the overlay's flex children, while
      third-party sections nest their own hash_panel wrappers deep inside
-     the settings content — a descendant rule glassed those empty inner
-     wrappers into visible grey slabs (bili settings rendered as a blank
-     panel with one icon). Menus are excluded: they keep their own
-     slider-adaptive fill. */
-  body[${ACTIVE_ATTR}] [class*="_dialog_"],
-  body[${ACTIVE_ATTR}] [class$="_overlay"] > [class$="_panel"]:not([data-menu-material]) {
+     the settings content (a descendant rule glassed those empty inner
+     wrappers into visible grey slabs). Menus are excluded: they keep
+     their own slider-adaptive fill. */
+  body[${ACTIVE_ATTR}] [class*="_dialog_"] {
     background-color: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 80%, transparent);
     background-image: var(--webg-grain), var(--webg-dim-veil), var(--webg-sheen);
     background-size: 140px 140px, 100% 100%, 100% 100%;
     -webkit-backdrop-filter: var(--webg-backdrop, blur(12px) saturate(1.5) brightness(1.04) contrast(1.01));
     backdrop-filter: var(--webg-backdrop, blur(12px) saturate(1.5) brightness(1.04) contrast(1.01));
     box-shadow: var(--webg-glass-shadow, 0 12px 40px rgba(0, 0, 0, 0.14));
+  }
+
+  /* Overlay window panels (the settings window, the lightbox) carry the
+     melt on a ::before layer instead of on the panel itself.
+     backdrop-filter makes its host the CONTAINING BLOCK for fixed and
+     absolutely positioned descendants (Filter Effects spec) — the panel
+     hosts every third-party settings section, and billion-context's
+     "bili 设置" anchors fixed layers to the viewport: the moment the
+     panel became their containing block its whole tree laid out wrong
+     and the dialog went blank (one stray icon left). A ::before carries
+     tint + material + the chain but is nobody's ancestor, so content
+     anchors exactly as the host built it. The panel keeps its host
+     position: relative + z-index: 1 — its own stacking context, so the
+     -1 pseudo paints above the (now transparent) panel fill and below
+     the content. Wallpaper-off restores the host's opaque fill, so the
+     transparent override must ride the active attribute. */
+  body[${ACTIVE_ATTR}] [class$="_overlay"] > [class$="_panel"]:not([data-menu-material]) {
+    position: relative;
+    background-color: transparent;
+    box-shadow: var(--webg-glass-shadow, 0 12px 40px rgba(0, 0, 0, 0.14));
+  }
+  body[${ACTIVE_ATTR}] [class$="_overlay"] > [class$="_panel"]:not([data-menu-material])::before {
+    content: ""; position: absolute; inset: 0; z-index: -1;
+    border-radius: inherit;
+    background-color: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 80%, transparent);
+    background-image: var(--webg-grain), var(--webg-dim-veil), var(--webg-sheen);
+    background-size: 140px 140px, 100% 100%, 100% 100%;
+    -webkit-backdrop-filter: var(--webg-backdrop, blur(12px) saturate(1.5) brightness(1.04) contrast(1.01));
+    backdrop-filter: var(--webg-backdrop, blur(12px) saturate(1.5) brightness(1.04) contrast(1.01));
   }
 
   /* Third-party full-page surfaces. The wallpaper transparency turns
@@ -2484,6 +2511,7 @@ const CSS = `
   body[${ACTIVE_ATTR}] [data-composer-dock] [class*="_panel"],
   body[${ACTIVE_ATTR}] [class*="_dialog_"],
   body[${ACTIVE_ATTR}] [class$="_overlay"] > [class$="_panel"]:not([data-menu-material]),
+  body[${ACTIVE_ATTR}] [class$="_overlay"] > [class$="_panel"]:not([data-menu-material])::before,
   body[${ACTIVE_ATTR}] .dshRemotePage,
   body[${ACTIVE_ATTR}] .webg-adjust-bar {
       transition: background-color 180ms ease, box-shadow 180ms ease;
@@ -2505,7 +2533,7 @@ const CSS = `
   body[${ACTIVE_ATTR}][${LENS_ATTR}] [data-menu-material],
   body[${ACTIVE_ATTR}][${LENS_ATTR}] [data-composer-dock] [class*="_panel"],
   body[${ACTIVE_ATTR}][${LENS_ATTR}] [class*="_dialog_"],
-  body[${ACTIVE_ATTR}][${LENS_ATTR}] [class$="_overlay"] > [class$="_panel"]:not([data-menu-material]),
+  body[${ACTIVE_ATTR}][${LENS_ATTR}] [class$="_overlay"] > [class$="_panel"]:not([data-menu-material])::before,
   body[${ACTIVE_ATTR}][${LENS_ATTR}] .dshRemotePage,
   body[${ACTIVE_ATTR}][${LENS_ATTR}] .webg-adjust-bar {
     -webkit-backdrop-filter: var(--webg-backdrop-lens, var(--webg-backdrop, blur(12px)));
@@ -2566,6 +2594,13 @@ const CSS = `
     body[${ACTIVE_ATTR}] [class*="_dialog_"],
     body[${ACTIVE_ATTR}] [class$="_overlay"] > [class$="_panel"]:not([data-menu-material]) {
       background-color: var(--dsw-alias-bg-layer-2);
+    }
+    /* Overlay window panels carry their material on a ::before layer
+       (containing-block safety — see the glass section): under reduced
+       transparency the whole layer is removed and the panel's own solid
+       fill above takes over. */
+    body[${ACTIVE_ATTR}] [class$="_overlay"] > [class$="_panel"]:not([data-menu-material])::before {
+      content: none;
     }
   }
 
