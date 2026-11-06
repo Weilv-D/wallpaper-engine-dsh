@@ -48,6 +48,12 @@ const DARK_ATTR = "data-webg-dark";
 const LAYER_ID = "wallpaper-engine-dsh-layer";
 const SCRIM_ID = "wallpaper-engine-dsh-scrim";
 const STYLE_TAG_ID = "wallpaper-engine-dsh/styles";
+// Edge-refraction lens (Apple Liquid Glass "lensing"). The displacement map
+// and filter live in a plugin-owned inline <svg>; the body attribute gates
+// the CSS that wires surfaces to it.
+const LENS_ATTR = "data-webg-lens";
+const LENS_SVG_ID = "wallpaper-engine-dsh-lens";
+const LENS_FILTER_ID = "webg-lens";
 const CROSSFADE_MS = 520;
 /** Crossfade settle time before a leaving layer is detached. */
 const LEAVE_MS = CROSSFADE_MS + 120;
@@ -1263,6 +1269,128 @@ function sampleWallpaperLuminance() {
   if (lum !== null) sampledLuminance = lum;
 }
 
+// ── Edge refraction (liquid-glass lensing) ──────────────────────────────────
+// Apple's material bends light at the edges ("lensing", WWDC25 session 219).
+// The web equivalent is a displacement map run over the backdrop: a
+// rounded-rect SDF is rasterised once into an RGBA canvas whose R/G channels
+// encode the sample shift around a 128 neutral (B is reserved for a specular
+// pass), then referenced by an feDisplacementMap in an inline <svg defs>.
+// The map is stretched per surface (preserveAspectRatio="none"), so the
+// refraction band scales with the surface — Apple's own rule of thumb is
+// "larger elements read as thicker material", which this approximates.
+let lensMapUrl = null; // data URL of the displacement map; null until built
+
+function buildLensMap(size) {
+  if (typeof document !== "undefined" && typeof document.createElement === "function") {
+    const canvas = document.createElement("canvas");
+    if (canvas && typeof canvas.getContext === "function") {
+      const ctx = canvas.getContext("2d");
+      // Capability probe, not paranoia: the DOM-mock verify sandbox hands out
+      // a half-implemented 2d context, and a lens that cannot be built must
+      // degrade to the blur recipe, never take applyEffects down with it.
+      if (ctx && typeof ctx.createImageData === "function" &&
+          typeof ctx.putImageData === "function" &&
+          typeof canvas.toDataURL === "function") {
+        canvas.width = size;
+        canvas.height = size;
+        // Rounded-rect signed distance: negative inside, 0 at the shape edge
+        // (which is the canvas edge — the filter region extends past it).
+        const rad = size * 0.05;   // corner radius ≈ 5% of the surface
+        const band = size * 0.07;  // refraction band ≈ 7% of the surface
+        const cx = size / 2;
+        const sdf = (x, y) => {
+          const qx = Math.abs(x - cx) - (cx - 1 - rad);
+          const qy = Math.abs(y - cx) - (cx - 1 - rad);
+          const ax = Math.max(qx, 0);
+          const ay = Math.max(qy, 0);
+          return Math.sqrt(ax * ax + ay * ay) + Math.min(Math.max(qx, qy), 0) - rad;
+        };
+        // Convex bevel height: 1 in the interior, falling to 0 across the
+        // band. Convex (not linear) so the bend accelerates toward the rim,
+        // the way a real polished edge curves.
+        const height = (x, y) => {
+          const t = Math.max(0, Math.min(1, 1 + sdf(x, y) / band));
+          return 1 - Math.pow(1 - t, 2.2);
+        };
+        // Sample shift opposes the height gradient: at the right rim the
+        // gradient points left (height falls to the edge), so the map shifts
+        // sampling right — content outside the rim is pulled in and squeezed,
+        // the tell-tale Apple edge. k targets ≈90/255 of full deflection at
+        // the band's steepest slope (the convex profile's peak slope is
+        // 2.2/band per axis unit, sampled over ±eps); feDisplacementMap
+        // scale (18) then limits the on-screen shift to ≈±6px at the rim.
+        const eps = 1;
+        const k = 90 / (2 * 2.2 / band);
+        const img = ctx.createImageData(size, size);
+        const data = img.data;
+        for (let y = 0; y < size; y++) {
+          for (let x = 0; x < size; x++) {
+            const gx = height(x + eps, y) - height(x - eps, y);
+            const gy = height(x, y + eps) - height(x, y - eps);
+            const ox = Math.max(-127, Math.min(127, -gx * k));
+            const oy = Math.max(-127, Math.min(127, -gy * k));
+            const i = (y * size + x) * 4;
+            data[i] = 128 + ox;
+            data[i + 1] = 128 + oy;
+            data[i + 2] = 128; // reserved for a future specular pass
+            data[i + 3] = 255;
+          }
+        }
+        ctx.putImageData(img, 0, 0);
+        return canvas.toDataURL("image/png");
+      }
+    }
+  }
+  return null; // no canvas (e.g. the DOM-mock verify sandbox) → no lens, ever
+}
+
+function ensureLensDefs() {
+  if (!lensMapUrl || typeof document === "undefined" || !document.body) return;
+  if (typeof document.createElementNS !== "function") return; // degraded DOM
+  if (document.getElementById(LENS_SVG_ID)) return;
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.id = LENS_SVG_ID;
+  svg.dataset.plugin = "wallpaper-engine-dsh";
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("width", "0");
+  svg.setAttribute("height", "0");
+  // Off-screen, inert, invisible: it exists to host the filter definition.
+  svg.setAttribute("style",
+    "position:fixed;left:-10px;top:-10px;width:1px;height:1px;opacity:0;pointer-events:none");
+  const defs = document.createElementNS(SVG_NS, "defs");
+  const filter = document.createElementNS(SVG_NS, "filter");
+  filter.setAttribute("id", LENS_FILTER_ID);
+  // Filter region headroom: displacement pulls samples from past the element
+  // bounds, and without the margin Chromium clips the refraction ring.
+  filter.setAttribute("x", "-8%");
+  filter.setAttribute("y", "-8%");
+  filter.setAttribute("width", "116%");
+  filter.setAttribute("height", "116%");
+  // sRGB explicitly: the default linearRGB working space drags the map's
+  // 128-neutral off centre and tints the whole displaced backdrop.
+  filter.setAttribute("color-interpolation-filters", "sRGB");
+  const image = document.createElementNS(SVG_NS, "feImage");
+  image.setAttribute("href", lensMapUrl);
+  image.setAttribute("x", "0");
+  image.setAttribute("y", "0");
+  image.setAttribute("width", "100%");
+  image.setAttribute("height", "100%");
+  image.setAttribute("preserveAspectRatio", "none"); // stretch to each surface
+  image.setAttribute("result", "map");
+  const disp = document.createElementNS(SVG_NS, "feDisplacementMap");
+  disp.setAttribute("in", "SourceGraphic");
+  disp.setAttribute("in2", "map");
+  disp.setAttribute("scale", "18");
+  disp.setAttribute("xChannelSelector", "R");
+  disp.setAttribute("yChannelSelector", "G");
+  filter.appendChild(image);
+  filter.appendChild(disp);
+  defs.appendChild(filter);
+  svg.appendChild(defs);
+  document.body.appendChild(svg);
+}
+
 function applyEffects() {
   // The veil OPPOSES the text colour: dark theme (light text) darkens bright
   // wallpapers, light theme (dark text) brightens dark ones — either way the
@@ -1277,11 +1405,43 @@ function applyEffects() {
       document.body.removeAttribute(DARK_ATTR);
     }
   }
+  // Lens bootstrap: build the displacement map the first time a wallpaper
+  // actually wants it (Chromium-family engine + live wallpaper + glass on).
+  // This sits ABOVE the change-key guard so the first chain this run writes
+  // already reflects the map's availability.
+  // backdrop-filter: url(#id) renders only in Chromium-family engines;
+  // Safari parses the declaration and then drops the whole chain at render
+  // time, so the lens rides an explicit UA gate instead of @supports (which
+  // cannot see the difference). DSH desktop is Electron (Chromium); the
+  // gate mainly keeps DSH-web in Safari/Firefox on the blur recipe.
+  // Evaluated per call, not cached at module load, so the gate tracks the
+  // live UA (and the verify harness can exercise both sides).
+  const lensUaOk = typeof navigator !== "undefined" &&
+    /Chrome|Chromium|Edg\//.test(navigator.userAgent || "");
+  if (lensUaOk && !lensMapUrl && selection.id && selection.blur > 0) {
+    lensMapUrl = buildLensMap(256);
+    if (lensMapUrl) ensureLensDefs();
+  }
+  const lensOn = Boolean(lensMapUrl) && lensUaOk && Boolean(selection.id) &&
+    selection.blur > 0;
+  // Attr sync likewise stays above the guard: the map can become available
+  // on a tick where no knob changed, and the early return would otherwise
+  // leave the gate unset until the next unrelated slider move.
+  if (typeof document !== "undefined" && document.body) {
+    if (lensOn) {
+      if (!(document.body.hasAttribute && document.body.hasAttribute(LENS_ATTR))) {
+        document.body.setAttribute(LENS_ATTR, "");
+      }
+    } else if (document.body.hasAttribute && document.body.hasAttribute(LENS_ATTR)) {
+      document.body.removeAttribute(LENS_ATTR);
+    }
+  }
   const roundedLum = sampledLuminance !== null ? Math.round(sampledLuminance * 100) / 100 : null;
   const key = [
     dark, selection.scrim, selection.border, selection.blur, selection.wallpaperBlur,
     selection.autoScrim, roundedLum, selection.fit, selection.zoom,
     selection.offsetX, selection.offsetY, selection.rotation, selection.mirrored,
+    lensOn ? 1 : 0,
   ].join("\u0000");
   if (key === lastEffectKey) return; // nothing it reads changed → no writes, no reflow
   lastEffectKey = key;
@@ -1302,8 +1462,54 @@ function applyEffects() {
   // The glass "colour melt" anchors at the shell's own menu material: the
   // slider's 40px ceiling reproduces the host recipe blur(40px) saturate(150%)
   // exactly, so full glass and the host's frosted chrome read as one system.
-  s.setProperty("--webg-saturate", String(1 + selection.blur * 0.0125));
-  s.setProperty("--webg-glass-brightness", "1.04");
+  const saturate = Math.round((1 + selection.blur * 0.0125) * 1000) / 1000;
+  // Adaptive luminosity — Apple's material self-adjusts to the content
+  // behind it: a bright wallpaper dims the glass a touch, a dark one lifts
+  // it, keeping the tint side of the ledger stable either way. No
+  // luminance evidence (null, e.g. before the first sample lands) → the
+  // neutral constant. Light theme pulls gentler: its dark text already
+  // survives bright glass.
+  let glassBright = 1.04;
+  if (sampledLuminance !== null) {
+    const pull = (sampledLuminance - 0.5) * (dark ? 0.16 : 0.12);
+    glassBright = Math.round(Math.min(1.12, Math.max(0.94, 1.04 - pull)) * 1000) / 1000;
+  }
+  // glass-brightness stays a standalone knob for inspection even though the
+  // chain below embeds it — it is the one value NOT derivable from the
+  // slider settings (it rides the luminance sampler).
+  s.setProperty("--webg-glass-brightness", String(glassBright));
+  // One chain, written once, consumed by every glass surface. The five
+  // hand-copied backdrop-filter declarations used to drift apart on edits.
+  // At 0 blur the chain collapses to none: surfaces fall back to their
+  // translucent token fills and the filter pipeline drops out entirely —
+  // the same bit-exact fast path the wallpaper media layer uses.
+  const chain = selection.blur > 0
+    ? "blur(" + selection.blur + "px) saturate(" + saturate +
+      ") brightness(" + glassBright + ") contrast(1.01)"
+    : "none";
+  s.setProperty("--webg-backdrop", chain);
+  s.setProperty("--webg-backdrop-lens",
+    lensOn ? "url(#" + LENS_FILTER_ID + ") " + chain : chain);
+  // Edge specular strength grows with the glass slider — Apple: thicker
+  // material catches more light. The 0.70 floor keeps a whisper of bevel
+  // at 0 blur, where the fill is still translucent glass.
+  s.setProperty("--webg-edge", (0.7 + selection.blur * 0.015).toFixed(2));
+  // Clear-variant adaptive dimming (composer + bubbles float over the media
+  // like Apple's "clear" glass): when the wallpaper's brightness threatens
+  // the theme's text, an extra veil layer INSIDE the glass tips the balance
+  // back. HIG Materials caps such a dimming layer at 35% opacity — the curve
+  // reaches exactly that ceiling on a pure-white/pure-black wallpaper. Same
+  // direction as the page veil, gentler, and a 0-alpha layer keeps the
+  // background-image stack size stable for compositing.
+  let dimAlpha = 0;
+  if (sampledLuminance !== null) {
+    const need = dark
+      ? Math.max(0, sampledLuminance - 0.5)
+      : Math.max(0, 0.5 - sampledLuminance);
+    dimAlpha = Math.round(Math.min(0.35, need * 0.7) * 1000) / 1000;
+  }
+  s.setProperty("--webg-adapt-dim",
+    "rgba(" + (dark ? "0,0,0" : "255,255,255") + "," + dimAlpha + ")");
   // Modal masks (settings dialog, image lightbox) read the shell's mask-blur
   // token — wire it to the glass slider so modals frost the app behind them
   // instead of showing the wallpaper sharply through a translucent mask.
@@ -1353,8 +1559,15 @@ function clearEffects() {
   s.removeProperty("--webg-border-alpha");
   s.removeProperty("--webg-blur");
   s.removeProperty("--dsw-mask-blur"); // restore the host's own mask token
-  s.removeProperty("--webg-saturate");
   s.removeProperty("--webg-glass-brightness");
+  s.removeProperty("--webg-backdrop");
+  s.removeProperty("--webg-backdrop-lens");
+  s.removeProperty("--webg-edge");
+  s.removeProperty("--webg-adapt-dim");
+  if (typeof document !== "undefined" && document.body &&
+      document.body.hasAttribute && document.body.hasAttribute(LENS_ATTR)) {
+    document.body.removeAttribute(LENS_ATTR);
+  }
   s.removeProperty("--webg-media-filter");
   s.removeProperty("--webg-noise-display");
   s.removeProperty("--webg-noise-opacity");
@@ -2003,16 +2216,23 @@ const CSS = `
   }
   .webg-adjust:active { cursor: grabbing; }
   .webg-adjust .webg-layer { position: absolute; z-index: 0; }
+  /* The adjust bar rides the same glass recipe as the host surfaces
+     (layers, edge speculars, chain var) — the plugin's own reference
+     rendering of the material. It only exists while a wallpaper runs, so
+     the body-level glass vars are always present; the fallbacks below are
+     just for out-of-context reads. */
   .webg-adjust-bar {
     position: absolute; top: 18px; left: 50%; transform: translateX(-50%);
     z-index: 1; cursor: default; -webkit-app-region: no-drag; app-region: no-drag;
     display: flex; align-items: center; gap: 12px;
     padding: 8px 8px 8px 14px; border-radius: 12px;
-    background: var(--dsw-alias-bg-overlay, rgba(30, 32, 38, 0.85));
+    background-color: var(--dsw-alias-bg-overlay, rgba(30, 32, 38, 0.85));
+    background-image: var(--webg-grain), var(--webg-dim-veil), var(--webg-sheen);
+    background-size: 140px 140px, 100% 100%, 100% 100%;
     color: var(--dsw-alias-label-primary, inherit);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+    -webkit-backdrop-filter: var(--webg-backdrop, blur(20px));
+    backdrop-filter: var(--webg-backdrop, blur(20px));
+    box-shadow: var(--webg-glass-shadow, 0 4px 16px rgba(0, 0, 0, 0.18));
     font-size: 12px; white-space: nowrap;
   }
 
@@ -2056,58 +2276,147 @@ const CSS = `
     --dsw-alias-label-dimmed: rgb(50, 52, 56);
   }
 
-  /* iOS liquid glass: opaque conversation surfaces become frosted glass.
-     Transparency rides the design tokens the surfaces already read;
-     backdrop-filter still needs element selectors ([data-composer-card] is
-     authored in the shell source and survives rebuilds; bubbles fall back to
-     the module-CSS suffix convention and degrade gracefully). */
+  /* ── Liquid glass material ─────────────────────────────────────────────
+     Apple's material (HIG Materials, WWDC25 sessions 219/356) reads as
+     glass through four cues, all reproduced here:
+     1. the backdrop melt — one filter chain, written by applyEffects as
+        --webg-backdrop, consumed by every surface (the five hand-copied
+        declarations this replaces used to drift apart on edits);
+     2. an asymmetric edge specular — the top bevel catches ~2-3x the
+        light of the sides; make the four edges equal and the surface
+        flattens into an outlined box. --webg-edge scales the alphas so
+        thicker glass (higher slider) catches more light;
+     3. adaptive luminosity — --webg-glass-brightness follows the sampled
+        wallpaper luminance; the clear-variant surfaces additionally get
+        --webg-adapt-dim, the HIG "35% dimming layer" treatment for glass
+        floating over media (capped at exactly that 0.35);
+     4. a whisper of grain — a pre-alpha'd feTurbulence tile keeps the
+        blurred backdrop from banding and gives the material a texture.
+     Surface roles follow the HIG variants: composer + bubbles are "clear"
+     glass floating over the media (thin fills + adaptive dim); menus /
+     dock / dialogs are "regular" chrome glass (deep fills). Menus keep
+     the shell's own chrome — their fill token and the chain var only —
+     because painting images over the host menu surface risks clobbering
+     host styling we cannot see. */
+
+  /* Material pieces, defined once per theme. The grain tile is grey
+     specks at ≤12% alpha (RGB forced to 0.5, alpha scaled off the
+     turbulence) so it reads on both light and dark fills without a blend
+     mode. The dim veil is a uniform colour layer — a plain colour cannot
+     sit in background-image, so it rides a degenerate gradient. */
   body[${ACTIVE_ATTR}] {
+    --webg-grain: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="140" height="140"><filter id="g"><feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="2" stitchTiles="stitch" seed="7"/><feColorMatrix type="matrix" values="0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0.12 0"/></filter><rect width="140" height="140" filter="url(%23g)"/></svg>');
+    --webg-dim-veil: linear-gradient(var(--webg-adapt-dim, rgba(0, 0, 0, 0)), var(--webg-adapt-dim, rgba(0, 0, 0, 0)));
+    --webg-sheen: linear-gradient(165deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.06) 32%, rgba(255, 255, 255, 0.02));
+    /* Light-theme edge stack: top bevel → thickness glow (fake subsurface
+       scatter under the bevel) → bottom catch → hairline ring → contact
+       seam under the rim → key + ambient drop shadow. */
+    --webg-glass-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, calc(0.32 * var(--webg-edge, 1))),
+      inset 0 2px 10px -4px rgba(255, 255, 255, calc(0.22 * var(--webg-edge, 1))),
+      inset 0 -1px 0 rgba(255, 255, 255, calc(0.10 * var(--webg-edge, 1))),
+      inset 0 0 0 0.5px rgba(255, 255, 255, calc(0.10 * var(--webg-edge, 1))),
+      0 1px 0 rgba(0, 0, 0, calc(0.05 * var(--webg-edge, 1))),
+      0 1px 2px rgba(0, 0, 0, 0.06),
+      0 12px 40px rgba(0, 0, 0, 0.14);
+    /* Clear-variant fills ride the host tokens the surfaces already read;
+       backdrop-filter still needs element selectors ([data-composer-card]
+       is authored in the shell source and survives rebuilds; bubbles fall
+       back to the module-CSS suffix convention and degrade gracefully). */
     --dsw-specific-input-major: rgba(255, 255, 255, 0.15);
     --dsw-specific-bubble: rgba(255, 255, 255, 0.12);
   }
   body[${DARK_ATTR}][${ACTIVE_ATTR}] {
+    /* Dark theme: tighter top-left hotspot, and the top bevel brightens
+       (over dark wallpapers the luminous edge is what carries the shape);
+       the contact seam goes — dark-on-dark — and the ambient deepens
+       because the fill itself is 2-3x thinner. */
+    --webg-sheen: linear-gradient(200deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.05) 26%, rgba(255, 255, 255, 0.015));
+    --webg-glass-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, calc(0.44 * var(--webg-edge, 1))),
+      inset 0 2px 10px -4px rgba(255, 255, 255, calc(0.16 * var(--webg-edge, 1))),
+      inset 0 -1px 0 rgba(255, 255, 255, calc(0.08 * var(--webg-edge, 1))),
+      inset 0 0 0 0.5px rgba(255, 255, 255, calc(0.14 * var(--webg-edge, 1))),
+      0 1px 2px rgba(0, 0, 0, 0.2),
+      0 12px 40px rgba(0, 0, 0, 0.32);
     --dsw-specific-input-major: rgba(255, 255, 255, 0.06);
     --dsw-specific-bubble: rgba(255, 255, 255, 0.05);
   }
+
+  /* Clear variant: composer card + message bubbles. */
   body[${ACTIVE_ATTR}] [data-composer-card],
   body[${ACTIVE_ATTR}] [class*="_bubble"] {
-    background-image: linear-gradient(165deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.06) 32%, rgba(255, 255, 255, 0.02));
-    -webkit-backdrop-filter: blur(var(--webg-blur, 16px)) saturate(var(--webg-saturate, 1.2)) brightness(var(--webg-glass-brightness, 1.04)) contrast(1.01);
-    backdrop-filter: blur(var(--webg-blur, 16px)) saturate(var(--webg-saturate, 1.2)) brightness(var(--webg-glass-brightness, 1.04)) contrast(1.01);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.36),
-      inset 0 -1px 0 rgba(255, 255, 255, 0.10),
-      inset 0 0 0 0.5px rgba(255, 255, 255, 0.10),
-      0 12px 40px rgba(0, 0, 0, 0.14);
+    background-image: var(--webg-grain), var(--webg-dim-veil), var(--webg-sheen);
+    background-size: 140px 140px, 100% 100%, 100% 100%;
+    -webkit-backdrop-filter: var(--webg-backdrop, blur(16px) saturate(1.2) brightness(1.04) contrast(1.01));
+    backdrop-filter: var(--webg-backdrop, blur(16px) saturate(1.2) brightness(1.04) contrast(1.01));
+    box-shadow: var(--webg-glass-shadow, 0 12px 40px rgba(0, 0, 0, 0.14));
   }
 
   /* Menu + queue-dock surface repair (wallpaper active). The shell's
      menu primitive parks fill and blur on a child layer while the
-     surface element itself is isolated - an isolated ancestor forms
-     a backdrop root, so the blur only samples the panel interior.
+     surface element itself is isolated - an isolated ancestor forms a
+     backdrop root, so the blur only samples the panel interior.
      Same on the queue dock panel (:before carries the blur). With a
      wallpaper active, menus showed sharp content through a 45% fill.
-     An element's OWN backdrop-filter ignores its own isolation, so
-     the filter moves onto the surface element; fill deepened 85%. */
+     An element's OWN backdrop-filter ignores its own isolation, so the
+     filter moves onto the surface element; fill deepened 85%. */
   body[${ACTIVE_ATTR}] { --dsw-menu-surface-fill: rgba(67, 69, 74, 0.85); }
   body[${ACTIVE_ATTR}]:not([${DARK_ATTR}]) { --dsw-menu-surface-fill: rgba(248, 249, 250, 0.85); }
   body[${ACTIVE_ATTR}] [data-menu-material],
   body[${ACTIVE_ATTR}] [data-composer-dock] [class*="_panel"] {
-    -webkit-backdrop-filter: blur(var(--webg-blur, 16px)) saturate(var(--webg-saturate, 1.2)) brightness(var(--webg-glass-brightness, 1.04)) contrast(1.01);
-    backdrop-filter: blur(var(--webg-blur, 16px)) saturate(var(--webg-saturate, 1.2)) brightness(var(--webg-glass-brightness, 1.04)) contrast(1.01);
+    -webkit-backdrop-filter: var(--webg-backdrop, blur(16px) saturate(1.2) brightness(1.04) contrast(1.01));
+    backdrop-filter: var(--webg-backdrop, blur(16px) saturate(1.2) brightness(1.04) contrast(1.01));
   }
 
   /* Settings modal and sibling dialogs: the shell paints dialogs on
      an opaque layer-2 panel. While a wallpaper is active, dialogs
      join the glass system - the mask behind them already frosts the
      app (the mask blur token is wired to the glass slider in
-     applyEffects). color-mix keeps the host hue at 80% opacity.
+     applyEffects). color-mix keeps the host hue at 80% opacity, and the
+     panel now carries the full material (sheen + edge stack + grain) -
+     the showcase surface of the system.
      [class*="_dialog_"] matches only the module-suffix panel class;
      compounds like _dialogHeader lack the underscore segment. */
   body[${ACTIVE_ATTR}] [class*="_dialog_"] {
     background-color: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 80%, transparent);
-    -webkit-backdrop-filter: blur(var(--webg-blur, 16px)) saturate(var(--webg-saturate, 1.2)) brightness(var(--webg-glass-brightness, 1.04)) contrast(1.01);
-    backdrop-filter: blur(var(--webg-blur, 16px)) saturate(var(--webg-saturate, 1.2)) brightness(var(--webg-glass-brightness, 1.04)) contrast(1.01);
+    background-image: var(--webg-grain), var(--webg-dim-veil), var(--webg-sheen);
+    background-size: 140px 140px, 100% 100%, 100% 100%;
+    -webkit-backdrop-filter: var(--webg-backdrop, blur(16px) saturate(1.2) brightness(1.04) contrast(1.01));
+    backdrop-filter: var(--webg-backdrop, blur(16px) saturate(1.2) brightness(1.04) contrast(1.01));
+    box-shadow: var(--webg-glass-shadow, 0 12px 40px rgba(0, 0, 0, 0.14));
+  }
+
+  /* Theme flips and slider-driven edge changes ease in instead of
+     popping. Only tint+shadow properties; the shell's own transform and
+     opacity motion (menus, dialogs) is untouched. */
+  @media (prefers-reduced-motion: no-preference) {
+    body[${ACTIVE_ATTR}] [data-composer-card],
+    body[${ACTIVE_ATTR}] [class*="_bubble"],
+    body[${ACTIVE_ATTR}] [data-menu-material],
+    body[${ACTIVE_ATTR}] [data-composer-dock] [class*="_panel"],
+    body[${ACTIVE_ATTR}] [class*="_dialog_"],
+    body[${ACTIVE_ATTR}] .webg-adjust-bar {
+      transition: background-color 180ms ease, box-shadow 180ms ease;
+    }
+  }
+
+  /* Edge refraction — the lensing signature (Chromium only; the UA gate
+     that sets ${LENS_ATTR} never flips in Safari/Firefox, where url() in
+     backdrop-filter parses and then silently kills the whole chain). The
+     url() sits FIRST so the backdrop is displaced before it melts; the
+     blur behind it hides the stretched map's single-pixel steps. Bubbles
+     opt out: dozens of small surfaces x one extra texture tap each is
+     real GPU for a shift nobody can see at their size. Document order:
+     above the accessibility blocks so both out-rank it (the
+     reduced-transparency block re-asserts with !important). */
+  body[${ACTIVE_ATTR}][${LENS_ATTR}] [data-composer-card],
+  body[${ACTIVE_ATTR}][${LENS_ATTR}] [data-menu-material],
+  body[${ACTIVE_ATTR}][${LENS_ATTR}] [data-composer-dock] [class*="_panel"],
+  body[${ACTIVE_ATTR}][${LENS_ATTR}] [class*="_dialog_"],
+  body[${ACTIVE_ATTR}][${LENS_ATTR}] .webg-adjust-bar {
+    -webkit-backdrop-filter: var(--webg-backdrop-lens, var(--webg-backdrop, blur(16px)));
+    backdrop-filter: var(--webg-backdrop-lens, var(--webg-backdrop, blur(16px)));
   }
 
   /* Windows desktop: the window-controls strip is an opaque host
@@ -2129,7 +2438,9 @@ const CSS = `
      effects off, macOS Reduce transparency). Glass off, surfaces back
      to solid fills; the wallpaper stays, legibility carried by the
      veil and the solids. Selectors mirror the glass rules above so
-     this block wins by document order. */
+     this block wins by document order; backdrop-filter re-asserts with
+     !important because the lens block above carries higher specificity
+     (two body attributes) that order alone cannot beat. */
   @media (prefers-reduced-transparency: reduce) {
     body[${ACTIVE_ATTR}] {
       --dsw-specific-input-major: #26272c;
@@ -2147,14 +2458,40 @@ const CSS = `
     body[${ACTIVE_ATTR}] [class*="_bubble"],
     body[${ACTIVE_ATTR}] [data-menu-material],
     body[${ACTIVE_ATTR}] [data-composer-dock] [class*="_panel"],
-    body[${ACTIVE_ATTR}] [class*="_dialog_"] {
-      -webkit-backdrop-filter: none;
-      backdrop-filter: none;
+    body[${ACTIVE_ATTR}] [class*="_dialog_"],
+    body[${ACTIVE_ATTR}] .webg-adjust-bar {
+      -webkit-backdrop-filter: none !important;
+      backdrop-filter: none !important;
       background-image: none;
       box-shadow: var(--dsw-elevation-soft, 0 3px 8px rgba(0, 0, 0, 0.08));
     }
     body[${ACTIVE_ATTR}] [class*="_dialog_"] {
       background-color: var(--dsw-alias-bg-layer-2);
+    }
+  }
+
+  /* Accessibility: prefers-contrast (Windows/macOS "increase contrast").
+     A different axis from reduced-transparency: the blur may stay, but
+     the fills go near-opaque and the hairline ring steps up to a real
+     border so text contrast no longer depends on the backdrop. */
+  @media (prefers-contrast: more) {
+    body[${DARK_ATTR}][${ACTIVE_ATTR}] {
+      --dsw-specific-input-major: rgba(38, 39, 44, 0.96);
+      --dsw-specific-bubble: rgba(38, 39, 44, 0.94);
+      --dsw-menu-surface-fill: rgba(64, 66, 71, 0.97);
+      --webg-glass-shadow:
+        inset 0 0 0 1px rgba(255, 255, 255, 0.4),
+        0 1px 2px rgba(0, 0, 0, 0.3),
+        0 12px 40px rgba(0, 0, 0, 0.35);
+    }
+    body[${ACTIVE_ATTR}]:not([${DARK_ATTR}]) {
+      --dsw-specific-input-major: rgba(248, 249, 250, 0.97);
+      --dsw-specific-bubble: rgba(244, 245, 246, 0.95);
+      --dsw-menu-surface-fill: rgba(248, 249, 250, 0.98);
+      --webg-glass-shadow:
+        inset 0 0 0 1px rgba(0, 0, 0, 0.45),
+        0 1px 2px rgba(0, 0, 0, 0.1),
+        0 12px 40px rgba(0, 0, 0, 0.16);
     }
   }
 
@@ -2465,7 +2802,13 @@ function apply(ctx) {
         tag.textContent = CSS;
         document.head.appendChild(tag);
       }
-      return () => { tag.remove(); };
+      return () => {
+        tag.remove();
+        // The lens <svg defs> is created lazily by applyEffects, long after
+        // this fiber registered — pull it down here so teardown is total.
+        const lens = document.getElementById(LENS_SVG_ID);
+        if (lens) lens.remove();
+      };
     });
   }
 

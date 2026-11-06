@@ -102,10 +102,17 @@ function makeEl(tag) {
     play() { el.playCalled = (el.playCalled || 0) + 1; return { catch() {} }; },
     pause() { el.pauseCalled = (el.pauseCalled || 0) + 1; },
     ...(tag.toLowerCase() === 'canvas' ? {
+      // Enough of a 2D API for BOTH consumers: the luminance sampler reads
+      // mock-pixel bytes via getImageData, and the lens displacement-map
+      // builder rasterises an SDF through createImageData/putImageData and
+      // mints a data URL off the element itself.
       getContext: () => ({
         drawImage() {},
         getImageData: () => ({ data: mockCanvasPixels || new Uint8Array(0) }),
+        createImageData: (w, h) => ({ data: new Uint8ClampedArray(w * h * 4), width: w, height: h }),
+        putImageData() {},
       }),
+      toDataURL: () => 'data:image/png;base64,TEVOU01BUA==',
     } : {}),
     querySelector(sel) {
       const all = walkAll(el, []);
@@ -127,6 +134,9 @@ const headEl = makeEl('head');
 const bodyEl = makeEl('body');
 const documentMock = {
   createElement: (t) => makeEl(t),
+  // The lens defs tree is built with the SVG-namespaced factory; the mock
+  // element is namespace-blind, which is all the client reads back.
+  createElementNS: (_ns, t) => makeEl(t),
   getElementById: (id) =>
     walkAll(bodyEl, []).concat(walkAll(headEl, [])).find((n) => n._id === id) || null,
   querySelector: (sel) => {
@@ -145,6 +155,11 @@ const documentMock = {
 };
 
 const timers = [];
+// Mutable on purpose: the lens UA gate reads navigator.userAgent on every
+// applyEffects call, so the harness can flip into a Safari UA and assert the
+// gate drops the lens without a second module boot.
+const CHROMIUM_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 Electron/37.0.0 DSH/0.2.1';
+const navigatorMock = { userAgent: CHROMIUM_UA, language: 'zh-CN' };
 const windowMock = {
   __ModuleLoader__: null, // installed below
   matchMedia: () => ({ matches: false }),
@@ -215,6 +230,7 @@ const sandbox = {
   document: documentMock,
   localStorage: localStorageMock,
   fetch: fetchMock,
+  navigator: navigatorMock,
 };
 vm.createContext(sandbox);
 new vm.Script(code, { filename: 'client.js' }).runInContext(sandbox);
@@ -307,6 +323,17 @@ check('style tag injected on apply', headEl.children.some((n) => n.tagName === '
   // neutral scheme itself.
   check('web wallpaper iframe pins color-scheme: normal against theme leakage',
     styleCss.includes('color-scheme: normal'));
+  // Liquid-glass material inventory: the four Apple cues must all be in the
+  // stylesheet — grain tile, asymmetric edge stack (--webg-edge alphas in
+  // calc), the lens-gated chain var, and both accessibility blocks.
+  check('liquid-glass material blocks present in css',
+    styleCss.includes('--webg-grain:') &&
+      styleCss.includes('calc(0.32 * var(--webg-edge') &&
+      styleCss.includes('var(--webg-backdrop-lens') &&
+      styleCss.includes('data-webg-lens') &&
+      styleCss.includes('@media (prefers-contrast: more)') &&
+      styleCss.includes('@media (prefers-reduced-transparency: reduce)'),
+    'grain/edge/lens/contrast/transparency markers');
 }
 check('initial fetch hits inventory', fetchCalls.includes('/we-background/inventory'), fetchCalls.join(','));
 check('theme/change handler bound for shell theme service',
@@ -346,6 +373,36 @@ setTimeout(async () => {
     props['--webg-media-filter']);
   check('noise overlay hidden at zero blur', props['--webg-noise-display'] === 'none',
     props['--webg-noise-display']);
+  // Glass chain: one var feeds every surface; the lens variant prefixes the
+  // displacement filter (Chromium UA + mock canvas ⇒ lens is live here).
+  // 16px default reproduces the host menu anchor: saturate(1.2).
+  check('backdrop chain var default (blur 16 anchor recipe)',
+    props['--webg-backdrop'] === 'blur(16px) saturate(1.2) brightness(1.04) contrast(1.01)',
+    props['--webg-backdrop']);
+  check('lens chain prefixes the displacement filter',
+    props['--webg-backdrop-lens'] === 'url(#webg-lens) ' + props['--webg-backdrop'],
+    props['--webg-backdrop-lens']);
+  check('edge specular strength rides the glass slider',
+    props['--webg-edge'] === '0.94', props['--webg-edge']);
+  check('adapt-dim idle at zero luminance evidence',
+    props['--webg-adapt-dim'] === 'rgba(255,255,255,0)', props['--webg-adapt-dim']);
+  check('lens svg defs mounted under body',
+    Boolean(documentMock.getElementById('wallpaper-engine-dsh-lens')));
+  check('body lens gate attribute set', bodyEl.attributes['data-webg-lens'] === '');
+  {
+    const lensSvg = documentMock.getElementById('wallpaper-engine-dsh-lens');
+    const defs = lensSvg && lensSvg.children[0];
+    const filter = defs && defs.children[0];
+    check('lens filter: sRGB + feImage map + displacement wiring',
+      Boolean(filter) && filter.attributes['color-interpolation-filters'] === 'sRGB' &&
+        filter.children.length === 2 &&
+        filter.children[0].tagName === 'FEIMAGE' &&
+        filter.children[0].attributes.preserveAspectRatio === 'none' &&
+        filter.children[0].attributes.href === 'data:image/png;base64,TEVOU01BUA==' &&
+        filter.children[1].tagName === 'FEDISPLACEMENTMAP' &&
+        filter.children[1].attributes.scale === '18',
+      filter ? 'filter present' : 'filter missing');
+  }
 
   // Rotation: 5-minute timer from the group, fires → 'b' (web wallpaper).
   const rotationTimer = timers.find((t) => !t.cleared && t.ms === 300000);
@@ -728,6 +785,40 @@ setTimeout(async () => {
       check('back to zero blur restores the fast path',
         bodyEl.style._props['--webg-media-filter'] === 'none' &&
           bodyEl.style._props['--webg-noise-display'] === 'none');
+
+      // Glass slider (index 3) drives the shared chain var. At 40 it must
+      // reproduce the host menu anchor blur(40px) saturate(150%); at 0 the
+      // whole glass pipeline collapses to none (surfaces keep translucent
+      // token fills) and the lens gate lifts — displacement without blur
+      // would amplify the stretched map's single-pixel steps.
+      const glassSlider = sliders[3];
+      glassSlider.props.onChange({ target: { value: '40', style: { setProperty() {} } } });
+      check('glass 40 = the host menu anchor recipe',
+        bodyEl.style._props['--webg-backdrop'] === 'blur(40px) saturate(1.5) brightness(1.04) contrast(1.01)',
+        bodyEl.style._props['--webg-backdrop']);
+      check('edge strength reaches its ceiling at 40px glass',
+        bodyEl.style._props['--webg-edge'] === '1.30',
+        bodyEl.style._props['--webg-edge']);
+      glassSlider.props.onChange({ target: { value: '0', style: { setProperty() {} } } });
+      check('glass 0 collapses the chain to none (no filter pipeline)',
+        bodyEl.style._props['--webg-backdrop'] === 'none' &&
+          bodyEl.style._props['--webg-backdrop-lens'] === 'none',
+        bodyEl.style._props['--webg-backdrop'] + ' | ' + bodyEl.style._props['--webg-backdrop-lens']);
+      check('lens gate lifts at 0 glass', bodyEl.attributes['data-webg-lens'] === undefined);
+      glassSlider.props.onChange({ target: { value: '16', style: { setProperty() {} } } });
+      check('lens gate returns with the glass', bodyEl.attributes['data-webg-lens'] === '');
+
+      // A non-Chromium UA must never carry the lens, even with the map
+      // machinery warm — Safari parses url() in backdrop-filter and then
+      // drops the whole chain at render time.
+      navigatorMock.userAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4 Safari/605.1.15';
+      glassSlider.props.onChange({ target: { value: '24', style: { setProperty() {} } } });
+      check('non-Chromium UA: lens gate off, chain stays the blur recipe',
+        bodyEl.attributes['data-webg-lens'] === undefined &&
+          !bodyEl.style._props['--webg-backdrop-lens'].startsWith('url('),
+        bodyEl.attributes['data-webg-lens'] + ' ' + bodyEl.style._props['--webg-backdrop-lens']);
+      navigatorMock.userAgent = CHROMIUM_UA;
+      glassSlider.props.onChange({ target: { value: '16', style: { setProperty() {} } } });
     }
 
     // Smart veil math: fire the media's loadeddata so the sampler runs over
@@ -747,16 +838,37 @@ setTimeout(async () => {
         check('bright frame raises the dark-theme veil floor to 0.5',
           bodyEl.style._props['--webg-scrim-color'] === 'rgba(0,0,0,0.5)',
           bodyEl.style._props['--webg-scrim-color']);
+        // Adaptive luminosity: the same sample steers the glass itself —
+        // bright content dims the melt, raises the clear-variant dim to the
+        // HIG 35% ceiling; dark content lifts the melt to the clamp.
+        check('bright frame dims the glass (adaptive luminosity)',
+          bodyEl.style._props['--webg-glass-brightness'] === '0.96',
+          bodyEl.style._props['--webg-glass-brightness']);
+        check('bright frame raises the clear-variant dim to the HIG ceiling',
+          bodyEl.style._props['--webg-adapt-dim'] === 'rgba(0,0,0,0.35)',
+          bodyEl.style._props['--webg-adapt-dim']);
+        check('backdrop chain embeds the adaptive brightness',
+          bodyEl.style._props['--webg-backdrop'].includes('brightness(0.96)'),
+          bodyEl.style._props['--webg-backdrop']);
         mockCanvasPixels = black;
         liveVideo._listeners.loadeddata();
         check('dark frame needs no floor (user scrim stands)',
           bodyEl.style._props['--webg-scrim-color'] === 'rgba(0,0,0,0.25)',
           bodyEl.style._props['--webg-scrim-color']);
+        check('dark frame lifts the glass to the clamp ceiling',
+          bodyEl.style._props['--webg-glass-brightness'] === '1.12',
+          bodyEl.style._props['--webg-glass-brightness']);
+        check('dark frame drops the clear-variant dim to zero',
+          bodyEl.style._props['--webg-adapt-dim'] === 'rgba(0,0,0,0)',
+          bodyEl.style._props['--webg-adapt-dim']);
         emitTheme(false);
         liveVideo._listeners.loadeddata();
         check('dark frame in LIGHT theme raises the white veil to 0.5',
           bodyEl.style._props['--webg-scrim-color'] === 'rgba(255,255,255,0.5)',
           bodyEl.style._props['--webg-scrim-color']);
+        check('light theme veils white: dim flips to the white side',
+          bodyEl.style._props['--webg-adapt-dim'] === 'rgba(255,255,255,0.35)',
+          bodyEl.style._props['--webg-adapt-dim']);
         mockCanvasPixels = null;
       }
     }
@@ -1053,6 +1165,8 @@ setTimeout(async () => {
     try { cleanup(); } catch (e) { check('cleanup does not throw', false, e && e.message); }
   }
   check('style tag removed on dispose', !headEl.children.some((n) => n.tagName === 'STYLE'));
+  check('lens svg removed on dispose', !documentMock.getElementById('wallpaper-engine-dsh-lens'));
+  check('lens gate removed on dispose', bodyEl.attributes['data-webg-lens'] === undefined);
   check('all layers removed on dispose', documentMock.querySelectorAll('.webg-layer').length === 0);
   check('scrim removed on dispose', !documentMock.getElementById('wallpaper-engine-dsh-scrim'));
   check('body attribute removed on dispose', bodyEl.attributes['data-webg-wallpaper'] === undefined);
