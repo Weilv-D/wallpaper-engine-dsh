@@ -30,8 +30,8 @@
  *      pan / wheel-to-zoom / Alt+drag-to-rotate adjust overlay (translate/
  *      rotate/scale transform) persisted per session. Horizontal mirroring
  *      (镜像) is a coverage-preserving flip and applies in EVERY mode.
- *   9. Legibility on any wallpaper: a theme-opposing veil (black in dark
- *      theme, white in light) with a luminance-adaptive "smart veil" floor.
+ *   9. Legibility on any wallpaper: an always-black veil with a
+ *      luminance-adaptive "smart veil" floor (the material is dark-pinned).
  */
 
 const React = require("react");
@@ -39,11 +39,9 @@ const React = require("react");
 const SETTINGS_KEY = "wallpaper-engine-dsh:selection";
 const INVENTORY_URL = "/we-background/inventory";
 const ACTIVE_ATTR = "data-webg-wallpaper";
-// Plugin-owned dark-theme signal for CSS. The shell's own dark-mode body
-// attribute still exists in 0.2.1-rc.5 (its writer moved to the layout
-// theme presenter), but the stylesheet never keys off host DOM internals:
-// the client derives dark from the shell's theme service and mirrors it
-// here, so a host-side restructure can never silently break the glass.
+// Plugin-owned dark mirror, still written for inspection/tooling. The
+// stylesheet no longer keys on it (the material is dark-pinned, so nothing
+// branches); it just reports that the dark recipe is active.
 const DARK_ATTR = "data-webg-dark";
 const LAYER_ID = "wallpaper-engine-dsh-layer";
 const SCRIM_ID = "wallpaper-engine-dsh-scrim";
@@ -1231,14 +1229,10 @@ let sampleCanvas = null;
 // tick would rewrite all CSS variables AND force a synchronous layout for
 // nothing. clearEffects() resets it so the next apply always writes.
 let lastEffectKey = null;
-// Resolved dark-theme state, driven by the shell theme service (or the OS
-// prefers-color-scheme fallback). Mirrored onto body[DARK_ATTR] for CSS.
-let themeDark = false;
-
 /** Average Rec.601 luminance and average RGB (all 0..255 scale) of a
- * drawable media frame, or null. The colour average feeds the light
- * theme's veil tint; the luminance drives the veil floor and the glass
- * material's adaptive brightness. */
+ * drawable media frame, or null. The luminance drives the veil floor and
+ * the glass material's adaptive brightness; the colour average quantises
+ * into the effect change key (16-level buckets). */
 function sampleFrame(media) {
   try {
     if (!sampleCanvas) {
@@ -1444,12 +1438,8 @@ function applyEffects() {
   // regardless of shell/OS theme; the light branch is retired.
   const dark = true;
   if (typeof document !== "undefined" && document.body) {
-    if (dark) {
-      if (!(document.body.hasAttribute && document.body.hasAttribute(DARK_ATTR))) {
-        document.body.setAttribute(DARK_ATTR, "");
-      }
-    } else if (document.body.hasAttribute && document.body.hasAttribute(DARK_ATTR)) {
-      document.body.removeAttribute(DARK_ATTR);
+    if (!(document.body.hasAttribute && document.body.hasAttribute(DARK_ATTR))) {
+      document.body.setAttribute(DARK_ATTR, "");
     }
   }
   // Lens bootstrap: build the displacement map the first time a wallpaper
@@ -1502,9 +1492,8 @@ function applyEffects() {
   let alpha = selection.scrim;
   if (selection.autoScrim && sampledLuminance !== null) {
     // Distance of the wallpaper's brightness from the "comfortable middle"
-    const need = dark
-      ? Math.min(0.55, Math.max(0, sampledLuminance - 0.5))
-      : Math.min(0.55, Math.max(0, 0.5 - sampledLuminance));
+    // dark-pinned: only BRIGHT content threatens the light text.
+    const need = Math.min(0.55, Math.max(0, sampledLuminance - 0.5));
     alpha = Math.max(alpha, Math.round(need * 1000) / 1000);
   }
   // The veil is pure black, always — the dark material needs no light-side
@@ -1567,9 +1556,7 @@ function applyEffects() {
   // background-image stack size stable for compositing.
   let dimAlpha = 0;
   if (sampledLuminance !== null) {
-    const need = dark
-      ? Math.max(0, sampledLuminance - 0.5)
-      : Math.max(0, 0.5 - sampledLuminance);
+    const need = Math.max(0, sampledLuminance - 0.5);
     // 0.7 slope, 0.35 HIG ceiling: the dim tips the balance back only when
     // the scene actually threatens the light text; 0-alpha keeps the
     // background-image stack stable for compositing.
@@ -1587,7 +1574,7 @@ function applyEffects() {
   // document order.
   const menuDeepen = Math.max(0, Math.min(1, (8 - selection.blur) / 8));
   s.setProperty("--webg-menu-fill-alpha",
-    (dark ? 0.72 + 0.13 * menuDeepen : 0.78 + 0.10 * menuDeepen).toFixed(2));
+    (0.72 + 0.13 * menuDeepen).toFixed(2));
   // Modal masks (settings dialog, image lightbox) read the shell's mask-blur
   // token — wire it to the glass slider so modals frost the app behind them
   // instead of showing the wallpaper sharply through a translucent mask.
@@ -2797,6 +2784,10 @@ const CSS = `
         0 1px 2px rgba(0, 0, 0, 0.3),
         0 12px 40px rgba(0, 0, 0, 0.35);
     }
+    body[${ACTIVE_ATTR}] [class$="_newSession"],
+    body[${ACTIVE_ATTR}] [class$="_newSession"]:hover:not(:disabled) {
+      background-color: var(--dsw-alias-button-elevated-fill);
+    }
   }
 
   /* ── Picker chrome (token-driven, theme-aware) ── */
@@ -3059,40 +3050,28 @@ function apply(ctx) {
     } catch { /* event bus unavailable → static language */ }
   }
 
-  // 0b. Theme: follow the shell's theme service (snapshot.active.colorScheme
-  //     is "light"|"dark"; "theme/change" emits the new snapshot). Without
-  //     the service, fall back to the OS prefers-color-scheme media query.
-  //     A flip re-runs applyEffects() so the veil colour (black ↔ white) and
-  //     the DARK_ATTR mirror follow immediately.
+  // 0b. Theme: the shell theme service is still subscribed ("theme/change")
+  //     so the shell can rely on the binding, but the MATERIAL is dark-pinned
+  //     — a flip only re-runs applyEffects(), whose change key makes it a
+  //     no-op. Same for the OS prefers-color-scheme fallback.
   const themeSvc = typeof ctx.get === "function" ? ctx.get("theme") : undefined;
   if (themeSvc && typeof themeSvc.getTheme === "function") {
-    try {
-      const snap = themeSvc.getTheme();
-      themeDark = Boolean(snap && snap.active && snap.active.colorScheme === "dark");
-    } catch { /* keep previous state */ }
     if (typeof ctx.on === "function") {
       try {
-        ctx.on("theme/change", (snap) => {
-          const next = Boolean(snap && snap.active && snap.active.colorScheme === "dark");
-          if (next !== themeDark) { themeDark = next; applyEffects(); }
-        });
+        ctx.on("theme/change", () => { applyEffects(); });
       } catch { /* event bus unavailable → static theme */ }
     }
   } else if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
     try {
       const mq = window.matchMedia("(prefers-color-scheme: dark)");
-      themeDark = Boolean(mq && mq.matches);
       if (typeof mq.addEventListener === "function") {
-        const onScheme = (e) => {
-          const next = Boolean(e && e.matches);
-          if (next !== themeDark) { themeDark = next; applyEffects(); }
-        };
+        const onScheme = () => { applyEffects(); };
         mq.addEventListener("change", onScheme);
         if (typeof ctx.effect === "function") {
           ctx.effect(() => () => mq.removeEventListener("change", onScheme));
         }
       }
-    } catch { /* no matchMedia → light default */ }
+    } catch { /* no matchMedia → static */ }
   }
 
   // 1. Styles: owned by the fiber — injected on apply, REMOVED on dispose.
