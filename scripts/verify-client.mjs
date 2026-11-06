@@ -338,12 +338,19 @@ check('style tag injected on apply', headEl.children.some((n) => n.tagName === '
       styleCss.includes('--dsw-menu-backdrop-filter: var(--webg-backdrop') &&
       styleCss.includes('--dsw-menu-surface-fill: rgba(67, 69, 74, var(--webg-menu-fill-alpha') &&
       styleCss.includes('[class$="_overlay"] > [class$="_panel"]:not([data-menu-material])::before') &&
-      styleCss.includes('calc(0.35 * var(--webg-border-alpha') &&
+      // Host border tokens stay at host values: hijacking them outlined
+      // every elevated control in chalk. The borders slider lives on the
+      // glass rims instead (both theme couplings present).
+      styleCss.includes('calc(0.34 * var(--webg-border-alpha') &&
+      styleCss.includes('calc(0.51 * var(--webg-border-alpha') &&
+      !styleCss.includes('--dsw-alias-border-l1: rgba(180') &&
       styleCss.includes('.dshRemotePage') &&
       styleCss.includes('.dshRemotePage::before') &&
+      styleCss.includes('[data-dsh-bottom-panel]') &&
+      styleCss.includes('[data-dsh-bottom-panel]::before') &&
       styleCss.includes('@media (prefers-contrast: more)') &&
       styleCss.includes('@media (prefers-reduced-transparency: reduce)'),
-    'grain/edge/lens/token/contrast/transparency markers');
+    'grain/edge/lens/token/dock/contrast/transparency markers');
 }
 check('initial fetch hits inventory', fetchCalls.includes('/we-background/inventory'), fetchCalls.join(','));
 check('theme/change handler bound for shell theme service',
@@ -884,6 +891,20 @@ setTimeout(async () => {
         check('light theme veils white: dim flips to the white side',
           bodyEl.style._props['--webg-adapt-dim'] === 'rgba(255,255,255,0.35)',
           bodyEl.style._props['--webg-adapt-dim']);
+        // Light-theme veil tint: the sampled average colour — hue only,
+        // normalised to full value — mixes into white at 18%, so the frost
+        // reads as this scene's glass rather than a dead grey sheet.
+        // Blue frame (40,80,160): lum ≈ 0.30 → user 0.25 floor stands;
+        // max channel 160 normalises to 255 → veil rgba(221,232,255,0.25).
+        const blue = new Uint8Array(16 * 16 * 4);
+        for (let i = 0; i < blue.length; i += 4) {
+          blue[i] = 40; blue[i + 1] = 80; blue[i + 2] = 160; blue[i + 3] = 255;
+        }
+        mockCanvasPixels = blue;
+        liveVideo._listeners.loadeddata();
+        check('light-theme veil borrows the wallpaper hue (tinted white, not grey)',
+          bodyEl.style._props['--webg-scrim-color'] === 'rgba(221,232,255,0.25)',
+          bodyEl.style._props['--webg-scrim-color']);
         mockCanvasPixels = null;
       }
     }
