@@ -2757,9 +2757,14 @@ const CSS = `
       radial-gradient(82% 26% at 50% -6%, hsl(0 0% 100% / calc(var(--webg-spec) * 0.34)), transparent 72%),
       radial-gradient(70% 34% at 50% 106%, hsl(var(--webg-tint-h2) 40% 88% / calc(var(--webg-spec) * 0.24)), transparent 70%);
     --webg-pointer-gloss: none;
+    /* Layer order: grain, dim veil, FOUR specular pools, gloss, pointer gloss
+       = 8 layers. The sizes/repeats lists must spell out one entry per layer:
+       a short list cycles from the start, so the fourth specular radial would
+       pick up "140px 140px / repeat" and tile the corner pools across the
+       surface as bright squares. */
     --webg-glass-layers: var(--webg-grain), var(--webg-dim-veil), var(--webg-spec-gloss), var(--webg-gloss), var(--webg-pointer-gloss);
-    --webg-glass-sizes: 140px 140px, 100% 100%, 100% 100%, 100% 100%, 100% 100%;
-    --webg-glass-repeats: repeat, no-repeat, no-repeat, no-repeat, no-repeat;
+    --webg-glass-sizes: 140px 140px, 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%;
+    --webg-glass-repeats: repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat;
     /* The bevel: a lit round column, not a uniform outline. Top specular
        (1px hard + a 3px decay so the edge has a falloff instead of reading
        as a sticker), a bottom return bounce, dark side walls, an inner

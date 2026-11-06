@@ -402,6 +402,35 @@ check('style tag injected on apply', headEl.children.some((n) => n.tagName === '
       styleCss.includes('@media (prefers-contrast: more)') &&
       styleCss.includes('@media (prefers-reduced-transparency: reduce)'),
     'body/bevel/elevation/tier/lens/contrast/transparency markers');
+
+  // Layer-count guard. --webg-glass-layers expands --webg-spec-gloss into FOUR
+  // radials, so the resolved stack is 8 layers. A sizes/repeats list shorter
+  // than the stack cycles from the start and tiles one specular pool at
+  // 140px — the patchy-squares regression this check pins down.
+  {
+    const token = (name) => {
+      const m = styleCss.match(new RegExp(name + ":([^;]*);"));
+      return m ? m[1] : "";
+    };
+    const entries = (v) => {
+      let depth = 0;
+      let n = 0;
+      let seen = false;
+      for (const ch of v) {
+        if (ch === "(") depth++;
+        else if (ch === ")") depth--;
+        else if (ch === "," && depth === 0) { n++; continue; }
+        if (depth === 0 && ch.trim()) seen = true;
+      }
+      return seen ? n + 1 : 0;
+    };
+    const pools = entries(token("--webg-spec-gloss"));
+    const sizes = entries(token("--webg-glass-sizes"));
+    const repeats = entries(token("--webg-glass-repeats"));
+    check('glass layer lists stay in step with the four specular radials',
+      pools === 4 && sizes === 8 && repeats === 8,
+      pools + ' pools / ' + sizes + ' sizes / ' + repeats + ' repeats');
+  }
 }
 check('initial fetch hits inventory', fetchCalls.includes('/we-background/inventory'), fetchCalls.join(','));
 check('theme/change handler bound for shell theme service',
