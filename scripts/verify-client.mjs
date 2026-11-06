@@ -328,6 +328,10 @@ check('style tag injected on apply', headEl.children.some((n) => n.tagName === '
   // calc), the lens-gated chain var, and both accessibility blocks.
   check('liquid-glass material blocks present in css',
     styleCss.includes('--webg-grain:') &&
+      // Apple-subliminal dither, not frosted sand: the grain matrix's alpha
+      // row must stay in the ~3% band (regression lock against 12%).
+      styleCss.includes('0 0 0 0.035 0') &&
+      !styleCss.includes('0 0 0 0.12 0') &&
       styleCss.includes('calc(0.32 * var(--webg-edge') &&
       styleCss.includes('var(--webg-backdrop-lens') &&
       styleCss.includes('data-webg-lens') &&

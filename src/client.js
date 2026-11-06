@@ -2300,12 +2300,14 @@ const CSS = `
      host styling we cannot see. */
 
   /* Material pieces, defined once per theme. The grain tile is grey
-     specks at ≤12% alpha (RGB forced to 0.5, alpha scaled off the
-     turbulence) so it reads on both light and dark fills without a blend
-     mode. The dim veil is a uniform colour layer — a plain colour cannot
-     sit in background-image, so it rides a degenerate gradient. */
+     specks at ~3.5% alpha (RGB forced to 0.5, alpha scaled off the
+     turbulence): Apple's own materials dither at a subliminal 1-3% —
+     enough to break banding, invisible as texture. The previous 12%
+     read as frosted sand on the dark fills. The dim veil is a uniform
+     colour layer — a plain colour cannot sit in background-image, so
+     it rides a degenerate gradient. */
   body[${ACTIVE_ATTR}] {
-    --webg-grain: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="140" height="140"><filter id="g"><feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="2" stitchTiles="stitch" seed="7"/><feColorMatrix type="matrix" values="0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0.12 0"/></filter><rect width="140" height="140" filter="url(%23g)"/></svg>');
+    --webg-grain: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="140" height="140"><filter id="g"><feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="2" stitchTiles="stitch" seed="7"/><feColorMatrix type="matrix" values="0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0.035 0"/></filter><rect width="140" height="140" filter="url(%23g)"/></svg>');
     --webg-dim-veil: linear-gradient(var(--webg-adapt-dim, rgba(0, 0, 0, 0)), var(--webg-adapt-dim, rgba(0, 0, 0, 0)));
     --webg-sheen: linear-gradient(165deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.06) 32%, rgba(255, 255, 255, 0.02));
     /* Light-theme edge stack: top bevel → thickness glow (fake subsurface
