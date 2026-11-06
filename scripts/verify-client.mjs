@@ -404,9 +404,10 @@ check('style tag injected on apply', headEl.children.some((n) => n.tagName === '
     'body/bevel/elevation/tier/lens/contrast/transparency markers');
 
   // Layer-count guard. --webg-glass-layers expands --webg-spec-gloss into FOUR
-  // radials, so the resolved stack is 8 layers. A sizes/repeats list shorter
-  // than the stack cycles from the start and tiles one specular pool at
-  // 140px — the patchy-squares regression this check pins down.
+  // radials, so the resolved stack is grain + veil + 4 pools + gloss + sheen +
+  // pointer = 9 layers. A sizes/repeats list shorter than the stack cycles
+  // from the start and tiles one specular pool at 140px — the patchy-squares
+  // regression this check pins down.
   {
     const token = (name) => {
       const m = styleCss.match(new RegExp(name + ":([^;]*);"));
@@ -428,7 +429,7 @@ check('style tag injected on apply', headEl.children.some((n) => n.tagName === '
     const sizes = entries(token("--webg-glass-sizes"));
     const repeats = entries(token("--webg-glass-repeats"));
     check('glass layer lists stay in step with the four specular radials',
-      pools === 4 && sizes === 8 && repeats === 8,
+      pools === 4 && sizes === 9 && repeats === 9,
       pools + ' pools / ' + sizes + ' sizes / ' + repeats + ' repeats');
   }
 }
@@ -490,7 +491,7 @@ setTimeout(async () => {
   check('adapt-dim idle at zero luminance evidence',
     props['--webg-adapt-dim'] === 'rgba(0,0,0,0)', props['--webg-adapt-dim']);
   check('glass body takes the wallpaper tint, not a fixed fill',
-    props['--webg-tint-a'] === '0.270' && props['--webg-tint-s'] === '6.2%',
+    props['--webg-tint-a'] === '0.335' && props['--webg-tint-s'] === '6.2%',
     props['--webg-tint-a'] + ' / ' + props['--webg-tint-s']);
   check('body lens gate attribute set', bodyEl.attributes['data-webg-lens'] === '');
   // The lens is per surface: a single shared 256px map stretched across every
