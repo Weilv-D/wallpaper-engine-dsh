@@ -678,11 +678,11 @@ function importPlaylistIntoDraft(playlist) {
   selection.editing.wallpaperIds = [...new Set(playlist.wallpaperIds.filter((id) => usable.has(id)))];
   emit();
 }
-// One-shot glass wake on a wallpaper switch: bump the registered --webg-edge
-// by 0.25 for a beat, then relax. applyEffects folds the bump into its edge
+// One-shot glass wake on a wallpaper switch: bump the registered --webg-rim
+// by 0.22 for a beat, then relax. applyEffects folds the bump into its rim
 // write; nulling the change key forces both passes through despite the key
 // guard. Skipped under prefers-reduced-motion AND without a timer host (the
-// verify sandbox) — a wake without a scheduled relax would wedge --webg-edge
+// verify sandbox) — a wake without a scheduled relax would wedge --webg-rim
 // at the swollen value.
 function triggerGlassWake() {
   if (REDUCED_MOTION) return;
@@ -1237,7 +1237,7 @@ let sampledColor = null;
 // Feeds the material's density: a noisy backdrop needs a thicker body than a
 // calm photograph at the same average brightness.
 let sampledVariety = 0;
-// Wallpaper-switch wake state: while true, applyEffects writes --webg-edge
+// Wallpaper-switch wake state: while true, applyEffects writes --webg-rim
 // with a +0.25 swell folded in; triggerGlassWake clears it after 450ms.
 let glassWake = false;
 let glassWakeTimer = 0;
@@ -1386,15 +1386,17 @@ function materialTokens() {
 // without piling on more fill.
 let lastGlassBright = 1.04;
 function tierChain(tier, blur, bright) {
-  if (blur <= 0) return "none";
+  // Single source for the caps: tierBlur, so the plain chain and the
+  // lens split can never drift apart on an edit.
+  const b = tierBlur(tier, blur);
+  if (b <= 0) return "none";
   if (tier === "t1") {
-    return "blur(" + Math.min(4, blur) + "px) saturate(1.6) brightness(" + bright + ") contrast(1)";
+    return "blur(" + b + "px) saturate(1.6) brightness(" + bright + ") contrast(1)";
   }
   if (tier === "t3") {
-    return "blur(" + Math.min(14, Math.max(blur, 6)) + "px) saturate(1.3) brightness(" + bright +
-      ") contrast(0.9)";
+    return "blur(" + b + "px) saturate(1.3) brightness(" + bright + ") contrast(0.9)";
   }
-  return "blur(" + Math.min(10, blur) + "px) saturate(1.4) brightness(" + bright + ") contrast(0.92)";
+  return "blur(" + b + "px) saturate(1.4) brightness(" + bright + ") contrast(0.92)";
 }
 
 // A lens surface splits its tier blur in two: a light CSS blur BEFORE the
@@ -1461,6 +1463,12 @@ let lensMutator = null;
 let lensResizer = null;
 const lensMapCache = new Map(); // "w,h,r,band" → data URL (≤12 entries)
 
+// Shared by the rasterizer and the feImage placement so the map's coordinate
+// frame and the image box can never drift apart.
+function lensPad(band) {
+  return Math.max(2, Math.round(band / 2));
+}
+
 function rasterizeLens(w, h, rad, band) {
   if (typeof document === "undefined" || typeof document.createElement !== "function") return null;
   const canvas = document.createElement("canvas");
@@ -1472,7 +1480,7 @@ function rasterizeLens(w, h, rad, band) {
   // The map carries a bounded border: feDisplacementMap samples past the
   // element box on the last row, and transparent black would read as a
   // full-strength displacement there.
-  const pad = Math.max(2, Math.round(band / 2));
+  const pad = lensPad(band);
   const cw = Math.min(700, Math.round(w + pad * 2)), ch = Math.min(700, Math.round(h + pad * 2));
   canvas.width = cw; canvas.height = ch;
   const ctx = canvas.getContext("2d");
@@ -1626,7 +1634,7 @@ function paintLensSlot(el) {
   const band = slot.spec.band;
   const url = surfaceLensMap(w, h, Math.max(0, Math.min(radius, Math.min(w, h) / 2 - 1)), band);
   if (!url) { clearLensChain(el); return; }
-  const pad = Math.max(2, Math.round(band / 2));
+  const pad = lensPad(band);
   slot.image.setAttribute("href", url);
   slot.image.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", url);
   slot.image.setAttribute("x", String(-pad));
@@ -1686,10 +1694,7 @@ function scanLensSurfaces() {
     if (slot.el.isConnected) return true;
     if (lensResizer) lensResizer.unobserve(slot.el);
     slot.filter.remove();
-    if (slot.el.style) {
-      slot.el.style.removeProperty("--webg-lens-chain");
-      slot.el.style.removeProperty("--dsw-menu-backdrop-filter");
-    }
+    clearLensChain(slot.el);
     delete slot.el.__webgLens;
     return false;
   });
@@ -1719,10 +1724,7 @@ function disposeLenses() {
   if (lensScanTimer) { cancelLater(lensScanTimer); lensScanTimer = 0; }
   for (const slot of lensSlots) {
     slot.filter.remove();
-    if (slot.el && slot.el.style) {
-      slot.el.style.removeProperty("--webg-lens-chain");
-      slot.el.style.removeProperty("--dsw-menu-backdrop-filter");
-    }
+    clearLensChain(slot.el);
     delete slot.el.__webgLens;
   }
   lensSlots = [];
@@ -1931,7 +1933,6 @@ function applyEffects() {
   // code but invisible on screen. Displacing the melted snapshot keeps the
   // bend crisp; it is the liquid signature. (The per-view filter URL is
   // appended by paintLensSlot into --webg-lens-chain.)
-  s.setProperty("--webg-edge", mat.rim.toFixed(3));
   // Clear-variant adaptive dimming (composer + bubbles float over the media
   // like Apple's "clear" glass): when the wallpaper's brightness threatens
   // the theme's text, an extra veil layer INSIDE the glass tips the balance
@@ -2015,9 +2016,7 @@ function clearEffects() {
   s.removeProperty("--dsw-mask-blur"); // restore the host's own mask token
   s.removeProperty("--webg-glass-brightness");
   s.removeProperty("--webg-backdrop");
-  s.removeProperty("--webg-edge");
   s.removeProperty("--webg-adapt-dim");
-  s.removeProperty("--webg-menu-fill-alpha");
   s.removeProperty("--webg-tint-h");
   s.removeProperty("--webg-tint-h2");
   s.removeProperty("--webg-tint-s");
@@ -2781,27 +2780,26 @@ const CSS = `
 
   /* ── Liquid glass material ─────────────────────────────────────────────
      Apple's material (HIG Materials, WWDC25 sessions 219/356) reads as
-     glass through four cues, all reproduced here:
+     glass through three cues, all reproduced here:
      1. the backdrop melt — one filter chain, written by applyEffects as
         --webg-backdrop, consumed by every surface (the five hand-copied
         declarations this replaces used to drift apart on edits);
      2. an asymmetric edge specular — the top bevel catches ~3x the
         light of the sides; make the four edges equal and the surface
-        flattens into an outlined box. --webg-edge scales the alphas so
-        thicker glass (higher slider) catches more light;
+        flattens into an outlined box. The rim/specular alphas follow the
+        sampled wallpaper (darker scene, stronger edges);
      3. adaptive luminosity — --webg-glass-brightness follows the sampled
         wallpaper luminance; the clear-variant surfaces additionally get
         --webg-adapt-dim, the HIG "35% dimming layer" treatment for glass
         floating over media (capped at exactly that 0.35);
-     4. a whisper of grain — a pre-alpha'd feTurbulence tile keeps the
-        blurred backdrop from banding and gives the material a texture.
-     Surface roles follow the HIG variants: composer + bubbles are "clear"
-     glass floating over the media (thin fills + adaptive dim); menus /
-     dock / dialogs are "regular" chrome glass (deep fills + full
-     material). Menus join the material too: their fill stays on the
-     host token with a slider-adaptive alpha (--webg-menu-fill-alpha) —
-     the earlier "keep shell chrome only" caution predated the material
-     system, and flat grey read as a dead panel, not glass. */
+     Surface roles follow the HIG variants: the composer is "clear" glass
+     floating over the media (thin fill + adaptive dim); bubbles take a
+     denser body instead of the dim layer. Menus / dock / dialogs are
+     "regular" chrome glass (deep fills + full material). Menus join the
+     material too: their fill rides the wallpaper-tinted body rather than
+     a separate grey — the earlier "keep shell chrome only" caution
+     predated the material system, and flat grey read as a dead panel,
+     not glass. */
 
   /* Material pieces, defined once per theme. The dim veil is a uniform
      colour layer -- a plain colour cannot sit in background-image, so
@@ -2810,12 +2808,11 @@ const CSS = `
     --webg-dim-veil: linear-gradient(var(--webg-adapt-dim, rgba(0, 0, 0, 0)), var(--webg-adapt-dim, rgba(0, 0, 0, 0)));
   }
 
-  /* Registered custom properties: the fluidity layer. --webg-edge (glass
+  /* Registered custom properties: the fluidity layer. --webg-rim (glass
      thickness, drives every bevel/ring/contour via calc) and --webg-adapt-dim
      (the adaptive dim layer) are transitionable, so slider moves, theme-adjacent
      re-writes and the wallpaper-switch wake glide instead of snapping.
      Engines without @property keep today's stepwise behaviour. */
-  @property --webg-edge { syntax: '<number>'; inherits: true; initial-value: 1; }
   @property --webg-rim { syntax: '<number>'; inherits: true; initial-value: 0.58; }
   @property --webg-adapt-dim { syntax: '<color>'; inherits: true; initial-value: rgba(0, 0, 0, 0); }
   /* Material permanently dark (user decision, 2026-11-06): one glass recipe,
@@ -3023,10 +3020,11 @@ const CSS = `
      Same on the queue dock panel (:before carries the blur). An
      element's OWN backdrop-filter ignores its own isolation, so the
      filter moves onto the surface element. The fill rides the blur
-     slider (--webg-menu-fill-alpha, written in applyEffects): glass
-     levels at usable blur, deepened toward the old 0.85 repair level
-     when blur approaches zero so menus never show sharp content
-     through. These surfaces now carry the full material too — the
+     element from the wallpaper-tinted body token, no separate grey:
+     glass levels stay usable at every slider position. These surfaces
+     now carry the full material too — the earlier "menus keep the
+     shell's chrome" caution predates the material system, and flat grey
+     read as a dead panel, not glass. */
      earlier "menus keep the shell's chrome" caution predates the
      material system, and flat grey read as a dead panel, not glass. */
   body[${ACTIVE_ATTR}] { --dsw-menu-surface-fill: var(--webg-body); }
@@ -3198,7 +3196,7 @@ const CSS = `
     box-shadow: none;
   }
   /* Motion: everything here is gated by prefers-reduced-motion. The wake
-     (see triggerGlassWake) swells the registered --webg-edge once per
+     (see triggerGlassWake) swells the registered --webg-rim once per
      wallpaper switch; webg-bar-in springs the crop bar in; the registered
      custom properties make edge/dim changes glide instead of snapping. */
   @keyframes webg-bar-in {
@@ -3222,7 +3220,7 @@ const CSS = `
       transition: background-color 180ms ease, box-shadow 180ms ease, --webg-adapt-dim 600ms ease;
     }
     /* Glass thickness glides: the registered --webg-rim eases instead of snapping. */
-    body { transition: --webg-rim 700ms ease, --webg-edge 700ms ease; }
+    body { transition: --webg-rim 700ms ease; }
     .webg-adjust-bar { animation: webg-bar-in 240ms ease-out backwards; }
   }
 

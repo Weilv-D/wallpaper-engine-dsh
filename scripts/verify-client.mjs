@@ -364,12 +364,10 @@ check('style tag injected on apply', headEl.children.some((n) => n.tagName === '
       styleCss.includes('--webg-panel-shadow: var(--webg-bevel), var(--webg-e2)') &&
       styleCss.includes('--webg-deep-shadow: var(--webg-bevel), var(--webg-e3)') &&
       // @property + fluidity: the thickness token eases, the crop bar springs.
-      styleCss.includes('@property --webg-edge') &&
       styleCss.includes('@property --webg-rim') &&
       styleCss.includes('@property --webg-adapt-dim') &&
       styleCss.includes('--webg-adapt-dim 600ms ease') &&
       styleCss.includes('--webg-rim 700ms ease') &&
-      styleCss.includes('--webg-edge 700ms ease') &&
       styleCss.includes('@keyframes webg-bar-in') &&
       styleCss.includes('box-shadow: var(--webg-panel-shadow') &&
       // The dock is T2 light glass now, not a bare hole and not a deep tint.
@@ -478,9 +476,6 @@ setTimeout(async () => {
       /^blur\(\d+px\) saturate\(1\.3\) brightness\([\d.]+\) contrast\(0\.9\)$/.test(props['--webg-chain-t3']),
     props['--webg-chain-t1'] + ' | ' + props['--webg-chain-t3']);
   check('no compat lens alias survives', props['--webg-backdrop-lens'] === undefined, props['--webg-backdrop-lens']);
-  check('edge specular strength rides the glass slider (wallpaper-adaptive)',
-    props['--webg-rim'] === '0.618' && props['--webg-edge'] === props['--webg-rim'],
-    props['--webg-rim'] + ' / ' + props['--webg-edge']);
   check('adapt-dim idle at zero luminance evidence',
     props['--webg-adapt-dim'] === 'rgba(0,0,0,0)', props['--webg-adapt-dim']);
   check('glass body takes the wallpaper tint, not a fixed fill',
@@ -883,9 +878,8 @@ setTimeout(async () => {
       check('glass 40 caps the T2 melt at the tier ceiling',
         bodyEl.style._props['--webg-backdrop'] === 'blur(10px) saturate(1.4) brightness(1.04) contrast(0.92)',
         bodyEl.style._props['--webg-backdrop']);
-      check('edge strength rides the slider, still wallpaper-bound',
-        bodyEl.style._props['--webg-rim'] === '0.618' &&
-          bodyEl.style._props['--webg-edge'] === bodyEl.style._props['--webg-rim'],
+      check('rim strength stays wallpaper-bound (slider-independent)',
+        bodyEl.style._props['--webg-rim'] === '0.618',
         bodyEl.style._props['--webg-rim']);
       glassSlider.props.onChange({ target: { value: '0', style: { setProperty() {} } } });
       check('glass 0 collapses the chain to none (no filter pipeline)',
