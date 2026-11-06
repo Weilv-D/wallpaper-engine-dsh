@@ -354,6 +354,13 @@ check('style tag injected on apply', headEl.children.some((n) => n.tagName === '
       styleCss.includes('box-shadow: var(--webg-panel-shadow') &&
       // The dock melts on the composer's own clear fill, not a deep tint.
       styleCss.includes('background-color: var(--dsw-specific-input-major, rgba(255, 255, 255, 0.06))') &&
+      // Composer controls ride Apple's tiers: neutral affordance = clear
+      // glass on the selector token; primary action = prominent tinted
+      // glass at 85% (tint stays dominant for the white glyph).
+      styleCss.includes('[data-composer-card] [class$="_add"]') &&
+      styleCss.includes('[data-composer-card] [class$="_primary"]') &&
+      styleCss.includes('color-mix(in srgb, var(--dsw-specific-selector) 40%') &&
+      styleCss.includes('color-mix(in srgb, var(--dsw-alias-button-info-fill) 85%') &&
       styleCss.includes('.dshRemotePage') &&
       styleCss.includes('.dshRemotePage::before') &&
       styleCss.includes('[data-dsh-bottom-panel]') &&

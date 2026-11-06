@@ -2470,6 +2470,45 @@ const CSS = `
     box-shadow: var(--webg-glass-shadow, 0 12px 40px rgba(0, 0, 0, 0.14));
   }
 
+  /* Composer controls, Apple's control tiers over media (WWDC25 session
+     356): a neutral affordance on glass is "clear" liquid glass; the
+     primary action is "prominent" tinted glass — the tint stays dominant
+     for the glyph's contrast, the glass reads through the translucency and
+     the edge light. Scoped under [data-composer-card] (authored in shell
+     source, survives rebuilds); the module classes themselves are hashed
+     and shift every shell update. Too small for the lens map's stretch, so
+     both ride the plain melt. */
+  body[${ACTIVE_ATTR}] [data-composer-card] [class$="_add"] {
+    background-color: color-mix(in srgb, var(--dsw-specific-selector) 40%, transparent);
+    background-image: var(--webg-grain), var(--webg-sheen);
+    background-size: 140px 140px, 100% 100%;
+    -webkit-backdrop-filter: var(--webg-backdrop, blur(12px) saturate(1.5) brightness(1.04) contrast(1.01));
+    backdrop-filter: var(--webg-backdrop, blur(12px) saturate(1.5) brightness(1.04) contrast(1.01));
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, calc(0.32 * var(--webg-edge, 1))),
+      inset 0 0 0 0.5px rgba(255, 255, 255, calc(0.22 * var(--webg-border-alpha, 0.35) * var(--webg-edge, 1))),
+      0 1px 2px rgba(0, 0, 0, 0.12),
+      0 2px 8px rgba(0, 0, 0, 0.10);
+  }
+  body[${ACTIVE_ATTR}] [data-composer-card] [class$="_add"]:hover:not(:disabled) {
+    background-color: color-mix(in srgb, var(--dsw-specific-selector) 65%, transparent);
+  }
+  body[${ACTIVE_ATTR}] [data-composer-card] [class$="_primary"] {
+    background-color: color-mix(in srgb, var(--dsw-alias-button-info-fill) 85%, transparent);
+    background-image: var(--webg-grain), var(--webg-sheen);
+    background-size: 140px 140px, 100% 100%;
+    -webkit-backdrop-filter: var(--webg-backdrop, blur(12px) saturate(1.5) brightness(1.04) contrast(1.01));
+    backdrop-filter: var(--webg-backdrop, blur(12px) saturate(1.5) brightness(1.04) contrast(1.01));
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, calc(0.40 * var(--webg-edge, 1))),
+      inset 0 0 0 0.5px rgba(255, 255, 255, 0.22),
+      0 1px 2px rgba(0, 0, 0, 0.16),
+      0 4px 14px rgba(0, 0, 0, 0.14);
+  }
+  body[${ACTIVE_ATTR}] [data-composer-card] [class$="_primary"]:hover:not(:disabled) {
+    background-color: color-mix(in srgb, var(--dsw-alias-button-info-hover) 85%, transparent);
+  }
+
   /* Menu + queue-dock surface repair (wallpaper active). The shell's
      menu primitive parks fill and blur on a child layer while the
      surface element itself is isolated - an isolated ancestor forms a
@@ -2708,6 +2747,8 @@ const CSS = `
     }
     body[${ACTIVE_ATTR}] [data-composer-card],
     body[${ACTIVE_ATTR}] [class*="_bubble"],
+    body[${ACTIVE_ATTR}] [data-composer-card] [class$="_add"],
+    body[${ACTIVE_ATTR}] [data-composer-card] [class$="_primary"],
     body[${ACTIVE_ATTR}] [data-menu-material],
     body[${ACTIVE_ATTR}] [data-composer-dock] [class*="_panel"],
     body[${ACTIVE_ATTR}] [class*="_dialog_"],
@@ -2721,11 +2762,15 @@ const CSS = `
       background-image: none;
       box-shadow: var(--dsw-elevation-soft, 0 3px 8px rgba(0, 0, 0, 0.08));
     }
-    body[${ACTIVE_ATTR}] [class*="_dialog_"],
-    body[${ACTIVE_ATTR}] [class$="_overlay"] > [class$="_panel"]:not([data-menu-material]),
-    body[${ACTIVE_ATTR}] [data-dsh-bottom-panel] {
-      background-color: var(--dsw-alias-bg-layer-2);
+    body[${ACTIVE_ATTR}] [data-composer-card] [class$="_add"],
+    body[${ACTIVE_ATTR}] [data-composer-card] [class$="_add"]:hover:not(:disabled) {
+      background-color: var(--dsw-specific-selector);
     }
+    body[${ACTIVE_ATTR}] [data-composer-card] [class$="_primary"],
+    body[${ACTIVE_ATTR}] [data-composer-card] [class$="_primary"]:hover:not(:disabled) {
+      background-color: var(--dsw-alias-button-info-fill);
+    }
+    body[${ACTIVE_ATTR}] [class*="_dialog_"],
     /* Overlay window panels carry their material on a ::before layer
        (containing-block safety — see the glass section): under reduced
        transparency the whole layer is removed and the panel's own solid
