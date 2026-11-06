@@ -3217,9 +3217,9 @@ const CSS = `
   /* Windows desktop: the window-controls strip is an opaque host
      overlay (titleBarOverlay colour, fed from the renderer-measured
      palette). Blend the wallpaper up into it with a short fade from
-     the overlay's own colour (dark #1b1b1c / light #f9fafb), scoped
+     the overlay's own colour, scoped
      to the desktop marker html[data-windows-titlebar] (absent in
-     browsers) and off in fullscreen. The fade is dark, always.
+     browsers) and off in fullscreen. The fade is dark, always. */
   body { --webg-titlebar-fill: #1b1b1c; }
   html[data-windows-titlebar]:not([data-fullscreen]) body[${ACTIVE_ATTR}] .webg-scrim::before {
     content: ""; position: absolute; top: 0; left: 0; right: 0;
