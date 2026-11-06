@@ -331,9 +331,10 @@ check('style tag injected on apply', headEl.children.some((n) => n.tagName === '
       styleCss.includes('calc(0.32 * var(--webg-edge') &&
       styleCss.includes('var(--webg-backdrop-lens') &&
       styleCss.includes('data-webg-lens') &&
+      styleCss.includes('--dsw-menu-backdrop-filter: var(--webg-backdrop') &&
       styleCss.includes('@media (prefers-contrast: more)') &&
       styleCss.includes('@media (prefers-reduced-transparency: reduce)'),
-    'grain/edge/lens/contrast/transparency markers');
+    'grain/edge/lens/token/contrast/transparency markers');
 }
 check('initial fetch hits inventory', fetchCalls.includes('/we-background/inventory'), fetchCalls.join(','));
 check('theme/change handler bound for shell theme service',

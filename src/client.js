@@ -2369,6 +2369,23 @@ const CSS = `
     backdrop-filter: var(--webg-backdrop, blur(16px) saturate(1.2) brightness(1.04) contrast(1.01));
   }
 
+  /* Token-level unification: the shell's OTHER floating panels (anchored
+     lists, stat/usage panels, rosters, menu child layers) consume the host
+     pair --dsw-specific-menu (fill — already deepened above through
+     menu-surface-fill) + --dsw-menu-backdrop-filter (the host's fixed
+     blur(40px) saturate(150%)). Their hashed module classes are out of
+     stable-selector reach, but the token is not: wire it to the same chain
+     the glass slider drives, so ALL floating chrome melts at one strength
+     and takes the lens with it. (macOS: html[data-platform=darwin]
+     re-asserts --dsw-specific-menu at higher specificity — desktop-vibrant
+     is host territory there anyway; Windows/browser builds are unaffected.) */
+  body[${ACTIVE_ATTR}] {
+    --dsw-menu-backdrop-filter: var(--webg-backdrop, blur(40px) saturate(150%));
+  }
+  body[${ACTIVE_ATTR}][${LENS_ATTR}] {
+    --dsw-menu-backdrop-filter: var(--webg-backdrop-lens, var(--webg-backdrop, blur(40px) saturate(150%)));
+  }
+
   /* Settings modal and sibling dialogs: the shell paints dialogs on
      an opaque layer-2 panel. While a wallpaper is active, dialogs
      join the glass system - the mask behind them already frosts the
@@ -2447,12 +2464,16 @@ const CSS = `
       --dsw-specific-bubble: #26272c;
       --dsw-menu-surface-fill: #43454a;
       --dsw-mask-blur: none !important;
+      /* !important: the lens-variant token override above carries higher
+         specificity than this block's selector can match without it. */
+      --dsw-menu-backdrop-filter: none !important;
     }
     body[${ACTIVE_ATTR}]:not([${DARK_ATTR}]) {
       --dsw-specific-input-major: #f8f9fa;
       --dsw-specific-bubble: #f4f5f6;
       --dsw-menu-surface-fill: #f8f9fa;
       --dsw-mask-blur: none !important;
+      --dsw-menu-backdrop-filter: none !important;
     }
     body[${ACTIVE_ATTR}] [data-composer-card],
     body[${ACTIVE_ATTR}] [class*="_bubble"],
