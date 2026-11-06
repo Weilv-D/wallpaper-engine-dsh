@@ -336,6 +336,7 @@ check('style tag injected on apply', headEl.children.some((n) => n.tagName === '
       styleCss.includes('var(--webg-backdrop-lens') &&
       styleCss.includes('data-webg-lens') &&
       styleCss.includes('--dsw-menu-backdrop-filter: var(--webg-backdrop') &&
+      styleCss.includes('.dshRemotePage') &&
       styleCss.includes('@media (prefers-contrast: more)') &&
       styleCss.includes('@media (prefers-reduced-transparency: reduce)'),
     'grain/edge/lens/token/contrast/transparency markers');
@@ -373,7 +374,7 @@ setTimeout(async () => {
   // dark theme (light text) veils BLACK — readable over any wallpaper.
   check('scrim veil is white in light theme', props['--webg-scrim-color'] === 'rgba(255,255,255,0.25)',
     props['--webg-scrim-color']);
-  check('glass blur css var default', props['--webg-blur'] === '16px', props['--webg-blur']);
+  check('glass blur css var default', props['--webg-blur'] === '12px', props['--webg-blur']);
   check('media filter is none at zero blur (bit-exact pixels)', props['--webg-media-filter'] === 'none',
     props['--webg-media-filter']);
   check('noise overlay hidden at zero blur', props['--webg-noise-display'] === 'none',
@@ -381,14 +382,14 @@ setTimeout(async () => {
   // Glass chain: one var feeds every surface; the lens variant prefixes the
   // displacement filter (Chromium UA + mock canvas ⇒ lens is live here).
   // 16px default reproduces the host menu anchor: saturate(1.2).
-  check('backdrop chain var default (blur 16 anchor recipe)',
-    props['--webg-backdrop'] === 'blur(16px) saturate(1.2) brightness(1.04) contrast(1.01)',
+  check('backdrop chain var default (liquid-zone blur, host vibrancy)',
+    props['--webg-backdrop'] === 'blur(12px) saturate(1.5) brightness(1.04) contrast(1.01)',
     props['--webg-backdrop']);
-  check('lens chain prefixes the displacement filter',
-    props['--webg-backdrop-lens'] === 'url(#webg-lens) ' + props['--webg-backdrop'],
+  check('lens chain appends the displacement filter (melt first, bend last)',
+    props['--webg-backdrop-lens'] === props['--webg-backdrop'] + ' url(#webg-lens)',
     props['--webg-backdrop-lens']);
   check('edge specular strength rides the glass slider',
-    props['--webg-edge'] === '0.94', props['--webg-edge']);
+    props['--webg-edge'] === '0.88', props['--webg-edge']);
   check('adapt-dim idle at zero luminance evidence',
     props['--webg-adapt-dim'] === 'rgba(255,255,255,0)', props['--webg-adapt-dim']);
   check('lens svg defs mounted under body',
@@ -801,6 +802,9 @@ setTimeout(async () => {
       check('glass 40 = the host menu anchor recipe',
         bodyEl.style._props['--webg-backdrop'] === 'blur(40px) saturate(1.5) brightness(1.04) contrast(1.01)',
         bodyEl.style._props['--webg-backdrop']);
+      check('lens var carries the bend at 40 too',
+        bodyEl.style._props['--webg-backdrop-lens'].endsWith('url(#webg-lens)'),
+        bodyEl.style._props['--webg-backdrop-lens']);
       check('edge strength reaches its ceiling at 40px glass',
         bodyEl.style._props['--webg-edge'] === '1.30',
         bodyEl.style._props['--webg-edge']);
@@ -820,7 +824,7 @@ setTimeout(async () => {
       glassSlider.props.onChange({ target: { value: '24', style: { setProperty() {} } } });
       check('non-Chromium UA: lens gate off, chain stays the blur recipe',
         bodyEl.attributes['data-webg-lens'] === undefined &&
-          !bodyEl.style._props['--webg-backdrop-lens'].startsWith('url('),
+          !bodyEl.style._props['--webg-backdrop-lens'].includes('url('),
         bodyEl.attributes['data-webg-lens'] + ' ' + bodyEl.style._props['--webg-backdrop-lens']);
       navigatorMock.userAgent = CHROMIUM_UA;
       glassSlider.props.onChange({ target: { value: '16', style: { setProperty() {} } } });

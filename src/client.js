@@ -268,7 +268,7 @@ function S() {
 const DEFAULTS = {
   scrim: 0.25,
   border: 0.35,
-  blur: 16,
+  blur: 12,
   wallpaperBlur: 0,
   rotationEnabled: false,
   rotationInterval: 30,
@@ -1459,10 +1459,13 @@ function applyEffects() {
   s.setProperty("--webg-scrim-color", veilColor);
   s.setProperty("--webg-border-alpha", String(selection.border));
   s.setProperty("--webg-blur", selection.blur + "px");
-  // The glass "colour melt" anchors at the shell's own menu material: the
-  // slider's 40px ceiling reproduces the host recipe blur(40px) saturate(150%)
-  // exactly, so full glass and the host's frosted chrome read as one system.
-  const saturate = Math.round((1 + selection.blur * 0.0125) * 1000) / 1000;
+  // Vibrancy rides a CONSTANT saturate(1.5) — the host menu material's own
+  // recipe — at every slider position. The blur slider then only steers how
+  // milk-glass vs. liquid the melt reads (the liquid zone is ~8-12px; past
+  // ~16px it reads frosted), never how saturated. The 40px ceiling keeps
+  // reproducing the host recipe blur(40px) saturate(150%) exactly, so full
+  // glass and the host's frosted chrome read as one system.
+  const saturate = 1.5;
   // Adaptive luminosity — Apple's material self-adjusts to the content
   // behind it: a bright wallpaper dims the glass a touch, a dark one lifts
   // it, keeping the tint side of the ledger stable either way. No
@@ -1483,13 +1486,18 @@ function applyEffects() {
   // At 0 blur the chain collapses to none: surfaces fall back to their
   // translucent token fills and the filter pipeline drops out entirely —
   // the same bit-exact fast path the wallpaper media layer uses.
+  // The lens sits LAST on purpose: backdrop-filter functions compose in
+  // order, and a displacement that runs BEFORE the melt gets its ±6px bend
+  // spread across the 16px blur kernel — the refraction ring was there in
+  // code but invisible on screen. Displacing the melted snapshot keeps the
+  // bend crisp; it is the liquid signature.
   const chain = selection.blur > 0
     ? "blur(" + selection.blur + "px) saturate(" + saturate +
       ") brightness(" + glassBright + ") contrast(1.01)"
     : "none";
   s.setProperty("--webg-backdrop", chain);
   s.setProperty("--webg-backdrop-lens",
-    lensOn ? "url(#" + LENS_FILTER_ID + ") " + chain : chain);
+    lensOn ? chain + " url(#" + LENS_FILTER_ID + ")" : chain);
   // Edge specular strength grows with the glass slider — Apple: thicker
   // material catches more light. The 0.70 floor keeps a whisper of bevel
   // at 0 blur, where the fill is still translucent glass.
@@ -2350,8 +2358,8 @@ const CSS = `
   body[${ACTIVE_ATTR}] [class*="_bubble"] {
     background-image: var(--webg-grain), var(--webg-dim-veil), var(--webg-sheen);
     background-size: 140px 140px, 100% 100%, 100% 100%;
-    -webkit-backdrop-filter: var(--webg-backdrop, blur(16px) saturate(1.2) brightness(1.04) contrast(1.01));
-    backdrop-filter: var(--webg-backdrop, blur(16px) saturate(1.2) brightness(1.04) contrast(1.01));
+    -webkit-backdrop-filter: var(--webg-backdrop, blur(12px) saturate(1.5) brightness(1.04) contrast(1.01));
+    backdrop-filter: var(--webg-backdrop, blur(12px) saturate(1.5) brightness(1.04) contrast(1.01));
     box-shadow: var(--webg-glass-shadow, 0 12px 40px rgba(0, 0, 0, 0.14));
   }
 
@@ -2367,8 +2375,8 @@ const CSS = `
   body[${ACTIVE_ATTR}]:not([${DARK_ATTR}]) { --dsw-menu-surface-fill: rgba(248, 249, 250, 0.85); }
   body[${ACTIVE_ATTR}] [data-menu-material],
   body[${ACTIVE_ATTR}] [data-composer-dock] [class*="_panel"] {
-    -webkit-backdrop-filter: var(--webg-backdrop, blur(16px) saturate(1.2) brightness(1.04) contrast(1.01));
-    backdrop-filter: var(--webg-backdrop, blur(16px) saturate(1.2) brightness(1.04) contrast(1.01));
+    -webkit-backdrop-filter: var(--webg-backdrop, blur(12px) saturate(1.5) brightness(1.04) contrast(1.01));
+    backdrop-filter: var(--webg-backdrop, blur(12px) saturate(1.5) brightness(1.04) contrast(1.01));
   }
 
   /* Token-level unification: the shell's OTHER floating panels (anchored
@@ -2401,8 +2409,24 @@ const CSS = `
     background-color: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 80%, transparent);
     background-image: var(--webg-grain), var(--webg-dim-veil), var(--webg-sheen);
     background-size: 140px 140px, 100% 100%, 100% 100%;
-    -webkit-backdrop-filter: var(--webg-backdrop, blur(16px) saturate(1.2) brightness(1.04) contrast(1.01));
-    backdrop-filter: var(--webg-backdrop, blur(16px) saturate(1.2) brightness(1.04) contrast(1.01));
+    -webkit-backdrop-filter: var(--webg-backdrop, blur(12px) saturate(1.5) brightness(1.04) contrast(1.01));
+    backdrop-filter: var(--webg-backdrop, blur(12px) saturate(1.5) brightness(1.04) contrast(1.01));
+    box-shadow: var(--webg-glass-shadow, 0 12px 40px rgba(0, 0, 0, 0.14));
+  }
+
+  /* Third-party full-page surfaces. The wallpaper transparency turns
+     --dsw-alias-bg-base into a hole-puncher: any consumer expecting the
+     host's opaque base becomes see-through and the chrome behind shows
+     through sharply. ds-harness-remote's .dshRemotePage (stable, non-hashed
+     class prefix — same convention as this plugin's webg-*) is the known
+     case; dense content floating above the app gets the dialog treatment:
+     deep fill + full material + the shared chain, not a hole. */
+  body[${ACTIVE_ATTR}] .dshRemotePage {
+    background-color: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 85%, transparent);
+    background-image: var(--webg-grain), var(--webg-dim-veil), var(--webg-sheen);
+    background-size: 140px 140px, 100% 100%, 100% 100%;
+    -webkit-backdrop-filter: var(--webg-backdrop, blur(12px) saturate(1.5) brightness(1.04) contrast(1.01));
+    backdrop-filter: var(--webg-backdrop, blur(12px) saturate(1.5) brightness(1.04) contrast(1.01));
     box-shadow: var(--webg-glass-shadow, 0 12px 40px rgba(0, 0, 0, 0.14));
   }
 
@@ -2415,6 +2439,7 @@ const CSS = `
     body[${ACTIVE_ATTR}] [data-menu-material],
     body[${ACTIVE_ATTR}] [data-composer-dock] [class*="_panel"],
     body[${ACTIVE_ATTR}] [class*="_dialog_"],
+    body[${ACTIVE_ATTR}] .dshRemotePage,
     body[${ACTIVE_ATTR}] .webg-adjust-bar {
       transition: background-color 180ms ease, box-shadow 180ms ease;
     }
@@ -2423,19 +2448,22 @@ const CSS = `
   /* Edge refraction — the lensing signature (Chromium only; the UA gate
      that sets ${LENS_ATTR} never flips in Safari/Firefox, where url() in
      backdrop-filter parses and then silently kills the whole chain). The
-     url() sits FIRST so the backdrop is displaced before it melts; the
-     blur behind it hides the stretched map's single-pixel steps. Bubbles
-     opt out: dozens of small surfaces x one extra texture tap each is
-     real GPU for a shift nobody can see at their size. Document order:
-     above the accessibility blocks so both out-rank it (the
-     reduced-transparency block re-asserts with !important). */
+     chain var carries url() LAST: displacement applies to the melted
+     snapshot — run before the blur, the bend is spread across the blur
+     kernel and washed out (the refraction ring existed in code but was
+     invisible on screen). Bubbles opt out: dozens of small surfaces x one
+     extra texture tap each is real GPU for a shift nobody can see at
+     their size. Document order: above the accessibility blocks so both
+     out-rank it (the reduced-transparency block re-asserts with
+     !important). */
   body[${ACTIVE_ATTR}][${LENS_ATTR}] [data-composer-card],
   body[${ACTIVE_ATTR}][${LENS_ATTR}] [data-menu-material],
   body[${ACTIVE_ATTR}][${LENS_ATTR}] [data-composer-dock] [class*="_panel"],
   body[${ACTIVE_ATTR}][${LENS_ATTR}] [class*="_dialog_"],
+  body[${ACTIVE_ATTR}][${LENS_ATTR}] .dshRemotePage,
   body[${ACTIVE_ATTR}][${LENS_ATTR}] .webg-adjust-bar {
-    -webkit-backdrop-filter: var(--webg-backdrop-lens, var(--webg-backdrop, blur(16px)));
-    backdrop-filter: var(--webg-backdrop-lens, var(--webg-backdrop, blur(16px)));
+    -webkit-backdrop-filter: var(--webg-backdrop-lens, var(--webg-backdrop, blur(12px)));
+    backdrop-filter: var(--webg-backdrop-lens, var(--webg-backdrop, blur(12px)));
   }
 
   /* Windows desktop: the window-controls strip is an opaque host
