@@ -54,6 +54,9 @@ function makeEl(tag) {
   const el = {
     tagName: tag.toUpperCase(),
     children: [],
+    // True unconditionally: the mock cannot tell attachment, and the tests
+    // that remove surfaces go through explicit dispose paths.
+    isConnected: true,
     dataset: {},
     attributes: {},
     _classes: new Set(),
@@ -90,7 +93,10 @@ function makeEl(tag) {
         el._parent = null;
       }
     },
-    setAttribute(k, v) { el.attributes[k] = String(v); },
+    // Namespace-blind like the rest of the mock: the lens only reads back
+    // the plain attributes map.
+    setAttributeNS(_ns, k, v) { el.attributes[k] = String(v); },
+    setAttribute(k, v) { el.attributes[k] = String(v); if (k === 'id') el._id = String(v); },
     getAttribute(k) { return Object.prototype.hasOwnProperty.call(el.attributes, k) ? el.attributes[k] : null; },
     hasAttribute(k) { return Object.prototype.hasOwnProperty.call(el.attributes, k); },
     removeAttribute(k) { if (k === 'id') el._id = ''; delete el.attributes[k]; },
@@ -98,6 +104,11 @@ function makeEl(tag) {
     // (adjust-overlay Done button, pointer pan, keydown Esc).
     addEventListener(type, fn) { el._listeners = el._listeners || {}; el._listeners[type] = fn; },
     removeEventListener(type) { if (el._listeners) delete el._listeners[type]; },
+    matches(sel) {
+      // Only the lens spec selectors; everything else stays unsupported
+      // Honors the element: only a node carrying the data attribute matches.
+      return sel === '[data-composer-card]' && 'composerCard' in el.dataset;
+    },
     contains(node) { return walkAll(el, []).includes(node); },
     play() { el.playCalled = (el.playCalled || 0) + 1; return { catch() {} }; },
     pause() { el.pauseCalled = (el.pauseCalled || 0) + 1; },
@@ -124,7 +135,7 @@ function makeEl(tag) {
       const all = walkAll(el, []);
       if (sel.startsWith('.')) return all.filter((n) => n._classes.has(sel.slice(1)));
       const tagName = sel.split('[')[0].toUpperCase();
-      return all.filter((n) => n.tagName === tagName);
+      return tagName ? all.filter((n) => n.tagName === tagName) : all;
     },
   };
   return el;
@@ -132,6 +143,14 @@ function makeEl(tag) {
 
 const headEl = makeEl('head');
 const bodyEl = makeEl('body');
+
+// Lens fixture: a composer card the scan can claim, with fixed geometry so
+// paintLensSlot exercises the full raster -> paint -> inline-chain path.
+const composerFixture = makeEl('div');
+composerFixture.dataset.composerCard = '';
+composerFixture.clientWidth = 720;
+composerFixture.clientHeight = 116;
+bodyEl.appendChild(composerFixture);
 const documentMock = {
   createElement: (t) => makeEl(t),
   // The lens defs tree is built with the SVG-namespaced factory; the mock
@@ -894,10 +913,10 @@ setTimeout(async () => {
       // drops the whole chain at render time.
       navigatorMock.userAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4 Safari/605.1.15';
       glassSlider.props.onChange({ target: { value: '24', style: { setProperty() {} } } });
-      check('non-Chromium UA: lens gate off, chain stays the blur recipe',
+      check('non-Chromium UA: lens gate off, fixture chain cleared',
         bodyEl.attributes['data-webg-lens'] === undefined &&
-          !bodyEl.style._props['--webg-chain-t2'].includes('url('),
-        bodyEl.attributes['data-webg-lens'] + ' ' + bodyEl.style._props['--webg-chain-t2']);
+          composerFixture.style._props['--webg-lens-chain'] === undefined,
+        bodyEl.attributes['data-webg-lens'] + ' ' + composerFixture.style._props['--webg-lens-chain']);
       navigatorMock.userAgent = CHROMIUM_UA;
       glassSlider.props.onChange({ target: { value: '16', style: { setProperty() {} } } });
 
@@ -926,6 +945,30 @@ setTimeout(async () => {
         lensInput.props.onChange();
         check('lens on restores the gate attribute', bodyEl.attributes['data-webg-lens'] === '');
       }
+
+      // The machinery itself, exercised on the fixture: the scan mounts a
+      // per-view filter and paints the inline chain; the OS RT switch lifts
+      // the whole JS gate mid-session and everything tears back down.
+      drainShortTimers();
+      const lensSlot = composerFixture.__webgLens;
+      const lensFilter = lensSlot ? documentMock.getElementById(lensSlot.id) : null;
+      check('lens slot mounts on the composer fixture',
+        Boolean(lensFilter) && Boolean(lensSlot), String(lensSlot && lensSlot.id));
+      check('fixture carries the inline lens chain',
+        String(composerFixture.style._props['--webg-lens-chain'] || '').indexOf('url(#' + (lensSlot ? lensSlot.id : '') + ')') >= 0,
+        composerFixture.style._props['--webg-lens-chain']);
+      const disp = lensFilter && lensFilter.children[1];
+      check('displacement scale pins to band * 2.3',
+        Boolean(disp) && disp.attributes.scale === "28",
+        disp && disp.attributes.scale);
+      windowMock.matchMedia = (q) => ({ matches: String(q).indexOf('reduced-transparency') >= 0 });
+      glassSlider.props.onChange({ target: { value: '17', style: { setProperty() {} } } });
+      check('reduced-transparency lifts the lens gate', bodyEl.attributes['data-webg-lens'] === undefined);
+      check('reduced-transparency clears the fixture chain',
+        composerFixture.style._props['--webg-lens-chain'] === undefined);
+      windowMock.matchMedia = () => ({ matches: false });
+      glassSlider.props.onChange({ target: { value: '16', style: { setProperty() {} } } });
+      check('lens gate returns after RT lifts', bodyEl.attributes['data-webg-lens'] === '');
     }
 
     // Smart veil math: fire the media's loadeddata so the sampler runs over
