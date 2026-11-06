@@ -332,10 +332,12 @@ check('style tag injected on apply', headEl.children.some((n) => n.tagName === '
       // row must stay in the ~3% band (regression lock against 12%).
       styleCss.includes('0 0 0 0.035 0') &&
       !styleCss.includes('0 0 0 0.12 0') &&
-      styleCss.includes('calc(0.32 * var(--webg-edge') &&
+      styleCss.includes('calc(0.40 * var(--webg-edge') &&
       styleCss.includes('var(--webg-backdrop-lens') &&
       styleCss.includes('data-webg-lens') &&
       styleCss.includes('--dsw-menu-backdrop-filter: var(--webg-backdrop') &&
+      styleCss.includes('--dsw-menu-surface-fill: rgba(67, 69, 74, var(--webg-menu-fill-alpha') &&
+      styleCss.includes('[class$="_panel"]:not([data-menu-material])') &&
       styleCss.includes('.dshRemotePage') &&
       styleCss.includes('@media (prefers-contrast: more)') &&
       styleCss.includes('@media (prefers-reduced-transparency: reduce)'),
@@ -392,6 +394,8 @@ setTimeout(async () => {
     props['--webg-edge'] === '0.88', props['--webg-edge']);
   check('adapt-dim idle at zero luminance evidence',
     props['--webg-adapt-dim'] === 'rgba(255,255,255,0)', props['--webg-adapt-dim']);
+  check('menu fill sits at glass level at the default blur',
+    props['--webg-menu-fill-alpha'] === '0.78', props['--webg-menu-fill-alpha']);
   check('lens svg defs mounted under body',
     Boolean(documentMock.getElementById('wallpaper-engine-dsh-lens')));
   check('body lens gate attribute set', bodyEl.attributes['data-webg-lens'] === '');
@@ -406,7 +410,7 @@ setTimeout(async () => {
         filter.children[0].attributes.preserveAspectRatio === 'none' &&
         filter.children[0].attributes.href === 'data:image/png;base64,TEVOU01BUA==' &&
         filter.children[1].tagName === 'FEDISPLACEMENTMAP' &&
-        filter.children[1].attributes.scale === '18',
+        filter.children[1].attributes.scale === '24',
       filter ? 'filter present' : 'filter missing');
   }
 
