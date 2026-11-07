@@ -16,7 +16,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { createRouteRegistrar } from '../lib/index.js';
+import { apply, createRouteRegistrar } from '../lib/index.js';
 
 let tmp;
 let server;
@@ -268,6 +268,29 @@ test('inventory HEAD and method guards', async () => {
 
   const unknown = await get('/we-background/media/not-a-token');
   assert.equal(unknown.status, 404);
+});
+
+test('apply() registers once per webServer, whoever composes the patch twice', async () => {
+  // Loaders 0.2.2-rc.1 compose this bundle's patch twice; the duplicate
+  // exact-route guard turns a second registration into a plugin-card error.
+  // apply() hangs a marker on the webServer service object (a process
+  // singleton shared by every module instance), so both rows share one
+  // registration; a genuine re-apply after dispose registers fresh.
+  const registry = mockWebServer();
+  const ctx = { webServer: registry };
+  const dispose1 = apply(ctx);
+  const dispose2 = apply(ctx);
+  assert.equal(dispose2, dispose1);
+  const res = await new Promise((resolve) => {
+    registry.dispatch({ method: 'GET', url: '/we-background/inventory', headers: {} },
+      { statusCode: 0, setHeader() {}, end: (b) => resolve({ status: 200, body: String(b) }) });
+  });
+  assert.ok(res.body.length > 0);
+  dispose1();
+  dispose2(); // idempotent: the second run finds an empty disposer list
+  const again = apply(ctx);
+  assert.notEqual(again, dispose1);
+  again();
 });
 
 test('discovery: TTL re-runs after an explicit refresh (slot ownership)', async () => {

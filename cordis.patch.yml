@@ -1,12 +1,17 @@
 # wallpaper-engine-dsh bundle patch.
 #
-# Intentionally EMPTY since v2.3.5. The bundle row that the loader creates
-# from the profile's bundles list already applies this package's main
-# (lib/index.js, inject: ["webServer"]) — the same auto-apply every other
-# bundle-listed plugin rides (dsh-better-sidebar ships config-only patches).
-# A self-insert row here loaded the main a SECOND time under id
-# "we-background"; webserver builds old enough to tolerate duplicate route
-# registration ran both, and stricter builds (desktop 0.2.2-rc.1+) reject the
-# second with "webserver: duplicate exact route". The insert was removed; the
-# bundle row is the one instance.
-[]
+# The insert row below is the plugin's ONLY mount path: a bundle row in the
+# profile's bundles list does NOT apply the package main by itself (v2.3.5
+# briefly shipped an empty patch and the bundle reported "no components").
+# Desktop loaders 0.2.2-rc.1 compose this patch twice, which used to mean two
+# registrations of /we-background/inventory; apply() now dedupes per
+# webServer instance (see lib/index.js), so the second row is a no-op and the
+# duplicate-exact-route guard stays quiet.
+
+- insert:
+    # Host half. Hard-depends on `webServer` (declared via `inject` in
+    # lib/index.js) so the Loader orders it after the HTTP server mounts;
+    # this bundle is web-only (its dsh.client declares platform "web"), so it
+    # is simply not added to headless/TUI profiles.
+    - id: we-background
+      name: 'wallpaper-engine-dsh'
