@@ -96,7 +96,7 @@
 
 ### 3.1 状态
 
-模块级 `selection` 是唯一状态源；`subscribe/emit` 驱动 React 设置页与 DOM 图层。持久化键 `wallpaper-engine-dsh:selection`；另有 `wallpaper-engine-dsh:undecodable`（解码失败的 id 数组，上限 500，刷新时清空）。
+模块级 `selection` 是唯一状态源；`subscribe/emit` 驱动 React 设置页与 DOM 图层。持久化键 `wallpaper-engine-dsh:selection`；另有 `wallpaper-engine-dsh:undecodable`（id → 文件指纹 `size:mtimeMs` 的映射，上限 500；刷新不清空，指纹变化才解除，旧版 id 数组会迁移为 `"*"` 并钉到首次清单的指纹）。
 
 | 组 | 字段 | 说明 |
 | --- | --- | --- |
@@ -147,10 +147,10 @@
 `handleMediaFailure(sel, decodeFailure)`：
 
 1. 第一次错误：10 s 节流内只重挂一次，并通过 `loadInventory(true)` 换新令牌（令牌过期与文件不支持在第一次错误上无法区分，所以第一次一律先重试）；
-2. 第二次若判定为解码类失败（`MediaError.code` 为 3 解码错误 / 4 源不支持，或零帧检测器发现"在播放但解不出帧"）：把 id 写入持久化的"无法解码"集合（`wallpaper-engine-dsh:undecodable`，最多 500 条），条目立即从网格与轮转列表消失；若它正在显示，切到下一个轮转候选，没有候选就清空图层；
+2. 第二次若判定为解码类失败（`MediaError.code` 为 3 解码错误 / 4 源不支持，或零帧检测器发现"在播放但解不出帧"）：把 id → 文件指纹（`size:mtimeMs`，来自清单条目）写入持久化的"无法解码"映射（`wallpaper-engine-dsh:undecodable`，最多 500 条），条目立即从网格与轮转列表消失；若它正在显示，切到下一个轮转候选，没有候选就清空图层；
 3. 其他重复失败：若存在预览图，降级为静态预览（`demotedToPreview`）；没有预览则清空。
 
-"康复"路径：采样成功（视频 `loadeddata`、图片 `load`）或网页 iframe `load` 时 `clearMediaFailures()` 清零计数；零帧检测器在播放 2 s 后仍解码不出任何帧时按解码失败处理，解出帧则清零。降级标记只在"切到另一张壁纸再切回来"（id 变化）或点"刷新"（`onRefresh()` 清空全部降级、失败计数与"无法解码"集合后重载）时解除；对**当前正显示**的已降级壁纸再点一次不会重试——id 没有变化。
+"康复"路径：采样成功（视频 `loadeddata`、图片 `load`）或网页 iframe `load` 时 `clearMediaFailures()` 清零计数；零帧检测器在播放 2 s 后仍解码不出任何帧时按解码失败处理，解出帧则清零。降级标记只在"切到另一张壁纸再切回来"（id 变化）或点"刷新"（`onRefresh()` 清空降级与失败计数后重载）时解除；"无法解码"不参与刷新清除——`isUndecodable` 只在当前文件指纹与记录一致时生效，文件被替换或重新编码后自动回到网格。对**当前正显示**的已降级壁纸再点一次不会重试——id 没有变化。
 
 另有一条兜底 `attachFirstFrameWatchdog`：视频挂载 6 s 后仍在图层上，且已经报错或者在播放却没有画面（`readyState < 2` 或 `videoWidth === 0`），就按解码失败计入阶梯。它覆盖 Chromium 既不触发 `error` 也不触发 `playing` 的静默黑屏——没有这条，重试请求一旦失败，图层会一直黑着而条目仍留在网格里。
 
@@ -285,7 +285,7 @@ npm run verify     # 在 vm + DOM mock 中加载产物并断言行为
 | `.dshRemotePage` | 依赖约定类名，不是正式契约 | 远程页改类名会失去材质 |
 | `:has()` | 依赖 Chromium 105+ | DSH Web 与 Electron 桌面都满足；纯 Safari 用户本来也没有透镜 |
 | GPU 成本 | 每个透镜表面 = 一次全盒背景模糊 + 一次 SVG 位移；最多 6 类表面 | 低端机可让用户关"表面折射"或降玻璃滑杆 |
-| 视频编码 | H.265/HEVC 多数机器解不了 | 第二次解码类失败即记为"无法解码"并从网格移除；「刷新」可重试；转码 H.264/VP9 可解 |
+| 视频编码 | H.265/HEVC 多数机器解不了 | 第二次解码类失败即记为"无法解码"并从网格移除；判定绑定文件指纹（`size:mtimeMs`），刷新不复活，转码替换文件后自动恢复；转码 H.264/VP9 可解 |
 | 网页壁纸音频 | 沙箱文档音频受限 | 交互前静音；依赖 WE 系统音频输入的壁纸无信号 |
 | 场景/应用壁纸 | 不支持 | `.pkg` 由 WE 自己渲染，浏览器无法接管 |
 
@@ -329,5 +329,5 @@ npm run verify     # 在 vm + DOM mock 中加载产物并断言行为
 | 光池（specular pool） | 4 个径向高光 |
 | 唤醒（wake） | 切换壁纸时边光短暂增强（`--webg-rim` +0.22，约 450 ms 后回落） |
 | 降级（demote） | 视频反复失败后改用预览图 |
-| 无法解码（undecodable） | 解码类失败第二次后写入的持久化集合；条目从网格与轮转中移除，「刷新」清空 |
+| 无法解码（undecodable） | 解码类失败第二次后写入的持久化映射（id → 文件指纹）；条目从网格与轮转中移除，刷新不清空，指纹变化（文件被替换/重新编码）后恢复 |
 | 令牌（token） | 72 位随机串，替代文件路径出现在 URL 里 |

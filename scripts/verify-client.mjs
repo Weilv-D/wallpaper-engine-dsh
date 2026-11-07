@@ -1157,13 +1157,19 @@ setTimeout(async () => {
           if (refreshAfterHide) {
             refreshAfterHide.props.onClick();
             await new Promise((r) => setTimeout(r, 20));
-            const restored = cardByTitle(collectButtons(pickerRenders[0]()), 'Video A');
-            check('refresh clears the undecodable set and restores the card', Boolean(restored));
-            // Re-select so the following clear/fade checks still have a layer.
-            if (restored) {
-              restored.props.onClick();
-              drainShortTimers();
-            }
+            // The verdict is bound to the file's fingerprint: an unchanged
+            // file stays hidden across refreshes instead of replaying the
+            // same failure every time the user asks for fresh inventory.
+            check('refresh keeps the undecodable entry hidden',
+              !cardByTitle(collectButtons(pickerRenders[0]()), 'Video A'));
+          }
+          // The hide removed the layer; pick a healthy wallpaper so the
+          // clear/fade checks below still have something to tear down.
+          const healthyCard = cardByTitle(collectButtons(pickerRenders[0]()), 'Web B');
+          check('healthy wallpapers survive the refresh', Boolean(healthyCard));
+          if (healthyCard) {
+            healthyCard.props.onClick();
+            drainShortTimers();
           }
         }
       }

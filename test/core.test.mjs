@@ -303,6 +303,11 @@ test('buildInventoryFrom: assembles wallpapers + playlists from a fixture tree',
   assert.equal(w1.id, 'p1'); assert.equal(w1.type, 'video'); assert.equal(w1.playable, true);
   assert.ok(w1.media.endsWith('/media/tok-1'));
   assert.equal(w2.id, 'p3'); assert.equal(w2.type, 'web'); assert.equal(w2.playable, true);
+  // Each playable entry carries the media fingerprint the client scopes its
+  // "undecodable" verdict to (size:mtimeMs). Replacing the file changes it,
+  // which is the only thing that brings a hidden entry back.
+  assert.match(w1.fingerprint, /^\d+:\d+$/);
+  assert.match(w2.fingerprint, /^\d+:\d+$/);
   // Web entries are addressed AT their entry file — the document URL mirrors
   // the project directory (the client's iframe relies on this for relative
   // references to resolve):

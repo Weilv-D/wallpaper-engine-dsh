@@ -87,7 +87,7 @@ The UI follows the DSH 语言 (language) setting (中文 / English), or a manual
 - On a media failure: retry once with fresh tokens — a stale token and an unsupported file are indistinguishable on the first error.
 - A second failure that is decode-shaped (decode error, unsupported source, or a video that "plays" but decodes no frames) marks the entry undecodable: it leaves the grid and the rotation lists, and if it was showing, the next rotation candidate takes over (or the layer clears).
 - Other repeated failures fall back to the preview image with a status-line note; items without a preview clear the selection instead of showing a black screen.
-- 刷新 clears the undecodable and demotion marks, rescans the library and retries the original media; the playing element swaps its address in place and keeps its progress. Inventory rebuilds in the background reuse the same URLs and never interrupt playback.
+- 刷新 clears the demotion marks, rescans the library and retries the original media; the playing element swaps its address in place and keeps its progress. An undecodable verdict survives refreshes: it is bound to the file's fingerprint (size + mtime), so only replacing or re-encoding that file puts the entry back in the grid. Inventory rebuilds in the background reuse the same URLs and never interrupt playback.
 
 ## Install
 
@@ -150,7 +150,7 @@ Media service hardening:
 - Scene and application wallpapers are not listed: they are Wallpaper Engine's private `.pkg` packages, which a browser cannot execute.
 - Web wallpapers are storage-isolated; wallpapers that save state across loads cannot keep it.
 - Web wallpapers with sound stay silent until you interact with the page (sandboxed audio autoplay rules); wallpapers depending on Wallpaper Engine's system audio input have no signal to draw.
-- Video codecs follow the browser's decoder support: H.264, VP8, VP9 and AV1 play directly; H.265/HEVC cannot software-decode on most machines. When a video claims to play but decodes no frames, it is marked undecodable and leaves the grid (刷新 retries it). Transcode to an H.264 mp4 or a VP9 webm for full playback.
+- Video codecs follow the browser's decoder support: H.264, VP8, VP9 and AV1 play directly; H.265/HEVC cannot software-decode on most machines. When a video claims to play but decodes no frames, it is marked undecodable and leaves the grid; the verdict sticks to that file (size + mtime), so a re-encoded file is picked up automatically on the next refresh. Transcode to an H.264 mp4 or a VP9 webm for full playback.
 - The glass reads DSH design tokens; if a shell refactor renames them, the glass degrades to a plain translucent fill.
 - Surface refraction renders in Chromium-family engines only: Safari and Firefox parse `backdrop-filter: url()` and then drop the whole chain, so the plugin gates it by UA and falls back to plain blur. The Electron desktop is unaffected.
 
