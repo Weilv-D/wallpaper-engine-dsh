@@ -227,7 +227,7 @@
 | 远程页 | `.dshRemotePage` | T3 | 无 | `::before` |
 | 消息气泡 | `[class*="_bubble"]` | — | 无 | 体色 + 边光（内容层，不做背景采样） |
 
-**插件页页头为什么用“壁纸窗口”：** 宿主用 `.pageBar[data-natural]::before` 作为页头的绘制层，背景读 `--dsw-alias-bg-base`；插件把该令牌设为 `transparent` 后，页头全透明，滚过的内容会从吸顶栏里透出来。CSS 没有“透明且遮挡”的解法：`backdrop-filter` 只是把背景重新上色（擦不掉），给滚动容器加 `clip-path` 又会把吸顶栏一起裁掉。因此插件在栏内挂一个窗口：`syncHeaderWindow()` 把当前媒体复制进 `.webg-header-window`（高度取 `--plugin-header-paint-height`，`overflow:hidden`，`z-index:-1`），内部 `.webg-header-frame` 按“视口尺寸、减去栏的偏移”摆放，克隆的 `.webg-media` 与原层共用同一套 `object-fit`/裁剪/镜像/模糊样式，像素位置一致；视频克隆静音循环并每秒对齐 `currentTime`，web 壁纸退回预览图。窗口在栏的堆叠上下文里绘制于滚动行之上、标题与标签之下，宿主的 `::after` 分隔线仍在最上层；无栏或无选中壁纸时移除。
+**插件页页头为什么用“壁纸窗口”：** 宿主用 `.pageBar[data-natural]::before` 作为页头的绘制层，背景读 `--dsw-alias-bg-base`；插件把该令牌设为 `transparent` 后，页头全透明，滚过的内容会从吸顶栏里透出来。CSS 没有“透明且遮挡”的解法：`backdrop-filter` 只是把背景重新上色（擦不掉），给滚动容器加 `clip-path` 又会把吸顶栏一起裁掉。因此插件在栏内挂一个窗口：`syncHeaderWindow()` 把当前媒体复制进 `.webg-header-window`（高度取 `--plugin-header-paint-height`，`overflow:hidden`，`z-index:-1`），内部 `.webg-header-frame` 按“视口尺寸、减去栏的偏移”摆放，克隆的 `.webg-media` 与原层共用同一套 `object-fit`/裁剪/镜像/模糊样式，像素位置一致；窗口还复制了原层的画布底色（`.webg-header-frame` 的 `--webg-layer-bg`）、同一张抖动噪点（`::after`）和同色的遮罩（`.webg-header-veil` 读 `--webg-scrim-color`），所以暗化与模糊都随页面壁纸实时变化、逐像素对齐；视频克隆静音循环并每秒对齐 `currentTime`，web 壁纸退回预览图。窗口在栏的堆叠上下文里绘制于滚动行之上、标题与标签之下，宿主的 `::after` 分隔线仍在最上层；无栏或无选中壁纸时移除。
 
 **为什么有的表面把滤镜放在 `::before`：** `backdrop-filter` 会让元素成为固定/绝对后代的包含块。设置弹窗里装着第三方分区，billion-context 的 "bili 设置"把固定层锚到视口，滤镜一旦落在面板上，整棵树会错位甚至空白。`::before` 承载材质、不做任何人的祖先，内容锚定不受影响。同理适用于 `.dshRemotePage`。设置弹窗自身只有在**不包含**浮层窗口面板时才把滤镜放在元素上。
 
