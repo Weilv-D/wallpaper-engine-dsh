@@ -924,7 +924,10 @@ function attachMediaError(media, sel) {
     // first hit still goes through the retry rung (see count === 1 above).
     handleMediaFailure(sel, code === 3 || code === 4);
   });
-  if (sel.type === "video") attachZeroFrameDetector(media, sel);
+  if (sel.type === "video") {
+    attachZeroFrameDetector(media, sel);
+    attachFirstFrameWatchdog(media, sel);
+  }
 }
 
 // The ladder must be able to come back down. Without this, two transient
@@ -978,6 +981,32 @@ function attachZeroFrameDetector(media, sel) {
       else clearMediaFailures(sel); // decoded frames prove the container works
     }, 2000);
   });
+}
+
+// Silent-stall watchdog: an unsupported container does not always fire
+// `error`. Chromium can leave the element at readyState 0 forever - no
+// picture, no event, and the zero-frame detector never runs because
+// `playing` never fires either. The layer then stays black while the entry
+// keeps its place in the grid. This backstop feeds the same ladder: if the
+// element is still the one on the layer after the grace window and it has
+// either reported an error or is playing without a first frame, it counts
+// as a decode failure. The error path has usually booked one failure
+// already, so this second hit marks the entry undecodable; a no-event stall
+// books the first hit, retries, and the re-armed check finishes the job if
+// the retry kept the same element.
+function attachFirstFrameWatchdog(media, sel) {
+  const arm = () => {
+    window.setTimeout(() => {
+      const layer = document.getElementById(LAYER_ID);
+      if (!layer || layer.querySelector("video") !== media) return;
+      const dead = Boolean(media.error)
+        || (!media.paused && (media.readyState < 2 || media.videoWidth === 0));
+      if (!dead) return;
+      handleMediaFailure(sel, true);
+      arm(); // a failed inventory refresh leaves this element mounted
+    }, 6000);
+  };
+  arm();
 }
 
 // ── Manual crop: drag-to-pan / wheel-to-zoom in an adjust overlay ───────────

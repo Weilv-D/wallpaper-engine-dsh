@@ -992,6 +992,8 @@ setTimeout(async () => {
         documentMock.getElementById('wallpaper-engine-dsh-layer').querySelector('video');
       check('video carries a loadeddata sampler hook',
         Boolean(liveVideo && liveVideo._listeners && liveVideo._listeners.loadeddata));
+      check('video mount arms a first-frame watchdog',
+        timers.some((t) => !t.cleared && !t.fired && t.ms === 6000));
       if (liveVideo && liveVideo._listeners && liveVideo._listeners.loadeddata) {
         const white = new Uint8Array(16 * 16 * 4).fill(255);
         const black = new Uint8Array(16 * 16 * 4); // zeros
