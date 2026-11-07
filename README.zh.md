@@ -169,10 +169,9 @@ npm run verify     # 在 vm 沙箱中启动产物并断言行为
 
 ## 发布
 
-发布由 GitHub Actions 通过 npm Trusted Publishing(OIDC)自动完成,无需存储令牌。本地只需一条命令:
-
+发布规范见 `RELEASING.zh.md`,由 `scripts/release.mjs` 强制执行。本地一条命令:
 ```sh
 npm run release          # 补丁版本;另有 release:minor / release:major
 ```
 
-它会提升版本号、提交、打 `v<版本号>` 标签并一并推送。标签推送触发发布工作流:完整门禁 → 校验标签与版本一致 → `npm publish --provenance` → 自动创建 GitHub Release。
+脚本依次执行:预检(分支、工作区、同步、标签一致)→ 门禁(test → build → verify)→ 提升版本号,推送 `main` 与标签。发布由 GitHub Actions 通过 npm Trusted Publishing(OIDC)完成;脚本等待 Actions 结束,确认 npm 的 `latest` 指向新版本,并打印 GitHub Release 地址。

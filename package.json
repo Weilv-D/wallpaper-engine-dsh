@@ -66,9 +66,9 @@
     "test": "node --test test/core.test.mjs test/host.test.mjs",
     "prepare": "node scripts/prepare.mjs",
     "prepublishOnly": "npm run test && npm run build && npm run verify",
-    "release": "npm version patch -m \"chore: release v%s\" && git push --follow-tags",
-    "release:minor": "npm version minor -m \"chore: release v%s\" && git push --follow-tags",
-    "release:major": "npm version major -m \"chore: release v%s\" && git push --follow-tags"
+    "release": "node scripts/release.mjs",
+    "release:minor": "node scripts/release.mjs minor",
+    "release:major": "node scripts/release.mjs major"
   },
   "engines": {
     "dsh": ">=0.2.1-rc.5",

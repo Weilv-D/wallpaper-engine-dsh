@@ -169,10 +169,10 @@ npm run verify     # boots the bundle in a vm sandbox and asserts behaviour
 
 ## Releases
 
-Publishing runs on GitHub Actions through npm Trusted Publishing (OIDC), no stored token. Locally one command suffices:
+The release policy lives in `RELEASING.zh.md`; `scripts/release.mjs` enforces it. One command locally:
 
 ```sh
 npm run release          # patch bump; also release:minor / release:major
 ```
 
-It bumps the version, commits, tags `v<version>` and pushes both. The tag push triggers the publish workflow: full gate → tag/version match → `npm publish --provenance` → an automatic GitHub Release with notes.
+The script runs, in order: preflight (branch, clean tree, sync, tag match) → gates (test → build → verify) → version bump, then pushes `main` and the tag. Publishing runs on GitHub Actions through npm Trusted Publishing (OIDC); the script waits for Actions to finish, confirms npm's `latest` points at the new version, and prints the GitHub Release URL.
