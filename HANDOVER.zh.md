@@ -96,7 +96,7 @@
 
 ### 3.1 状态
 
-模块级 `selection` 是唯一状态源；`subscribe/emit` 驱动 React 设置页与 DOM 图层。持久化键 `wallpaper-engine-dsh:selection`；另有 `wallpaper-engine-dsh:undecodable`（id → 文件指纹 `size:mtimeMs` 的映射，上限 500；刷新不清空，指纹变化才解除，旧版 id 数组会迁移为 `"*"` 并钉到首次清单的指纹）。
+模块级 `selection` 是唯一状态源；`subscribe/emit` 驱动 React 设置页与 DOM 图层。持久化键 `wallpaper-engine-dsh:selection`；另有 `wallpaper-engine-dsh:undecodable`（带 schema 标记 `{ v: 1, marks: { id: "size:mtimeMs" } }`，上限 500；刷新不清空，指纹变化才解除；没有 `v` 标记的旧记录——裸 id 数组或 2.3.9 的无标记对象——在加载时整体丢弃，因为无法证明磁盘上的字节仍是当初失败的那份，文件可能在插件外被重新编码；仍然播不了的文件会被失败阶梯在数秒内重新标记）。
 
 | 组 | 字段 | 说明 |
 | --- | --- | --- |
@@ -150,7 +150,7 @@
 2. 第二次若判定为解码类失败（`MediaError.code` 为 3 解码错误 / 4 源不支持，或零帧检测器发现"在播放但解不出帧"）：把 id → 文件指纹（`size:mtimeMs`，来自清单条目）写入持久化的"无法解码"映射（`wallpaper-engine-dsh:undecodable`，最多 500 条），条目立即从网格与轮转列表消失；若它正在显示，切到下一个轮转候选，没有候选就清空图层；
 3. 其他重复失败：若存在预览图，降级为静态预览（`demotedToPreview`）；没有预览则清空。
 
-"康复"路径：采样成功（视频 `loadeddata`、图片 `load`）或网页 iframe `load` 时 `clearMediaFailures()` 清零计数；零帧检测器在播放 2 s 后仍解码不出任何帧时按解码失败处理，解出帧则清零。降级标记只在"切到另一张壁纸再切回来"（id 变化）或点"刷新"（`onRefresh()` 清空降级与失败计数后重载）时解除；"无法解码"不参与刷新清除——`isUndecodable` 只在当前文件指纹与记录一致时生效，文件被替换或重新编码后自动回到网格。对**当前正显示**的已降级壁纸再点一次不会重试——id 没有变化。
+"康复"路径：采样成功（视频 `loadeddata`、图片 `load`）或网页 iframe `load` 时 `clearMediaFailures()` 清零计数；零帧检测器在播放 2 s 后仍解码不出任何帧时按解码失败处理，解出帧则清零。降级标记只在"切到另一张壁纸再切回来"（id 变化）或点"刷新"（`onRefresh()` 清空降级与失败计数后重载）时解除；"无法解码"不参与刷新清除——`isUndecodable` 只在当前文件指纹与记录一致时生效，文件被替换或重新编码后自动回到网格。升级后首次加载会丢弃没有 schema 标记的旧记录（裸 id 数组或 2.3.9 的无标记对象）：这类记录无法证明磁盘上的字节仍是当初失败的那份，文件若已在插件外修好，一次加载即可回归；仍损坏的条目会在数秒内被失败阶梯重新标记。对**当前正显示**的已降级壁纸再点一次不会重试——id 没有变化。
 
 另有一条兜底 `attachFirstFrameWatchdog`：视频挂载 6 s 后仍在图层上，且已经报错或者在播放却没有画面（`readyState < 2` 或 `videoWidth === 0`），就按解码失败计入阶梯。它覆盖 Chromium 既不触发 `error` 也不触发 `playing` 的静默黑屏——没有这条，重试请求一旦失败，图层会一直黑着而条目仍留在网格里。
 

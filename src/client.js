@@ -429,9 +429,17 @@ function persistSelection() {
 // it survives reloads and refreshes, yet stops applying the moment the file
 // itself changes: a converted clip becomes eligible again without a manual
 // "clear" step, and 刷新 never resurrects a file that has not changed.
+//
+// The store carries a schema tag. Records without one (a bare id list, or the
+// untagged id → fingerprint object 2.3.9 wrote) are dropped on load: they say
+// nothing about the bytes on disk today, and a file fixed outside the plugin
+// must never stay hidden with no way to clear it. A file that is still broken
+// is re-marked by the failure ladder within seconds — the amnesty costs one
+// failed playback, not a lost wallpaper.
 const UNDECODABLE_KEY = "wallpaper-engine-dsh:undecodable";
-// id -> fingerprint of the bytes that failed, or "*" for records written
-// before fingerprints existed (pinned to the first inventory we see).
+const UNDECODABLE_VERSION = 1;
+// id -> fingerprint of the exact bytes that failed ("*" when the host could
+// not stat the file, which keeps the entry hidden).
 const undecodable = readUndecodable();
 
 function readUndecodable() {
@@ -440,17 +448,13 @@ function readUndecodable() {
     const raw = localStorage.getItem(UNDECODABLE_KEY);
     if (!raw) return marks;
     const data = JSON.parse(raw);
-    if (Array.isArray(data)) {
-      // v2.3.x wrote a bare id list; keep those entries hidden, but leave the
-      // fingerprint unknown until the next inventory can pin it.
-      for (const id of data) if (typeof id === "string" && id) marks.set(id, "*");
+    if (!data || data.v !== UNDECODABLE_VERSION ||
+        !data.marks || typeof data.marks !== "object") {
       return marks;
     }
-    if (data && typeof data === "object") {
-      for (const [id, fingerprint] of Object.entries(data)) {
-        if (typeof id === "string" && id && typeof fingerprint === "string") {
-          marks.set(id, fingerprint);
-        }
+    for (const [id, fingerprint] of Object.entries(data.marks)) {
+      if (typeof id === "string" && id && typeof fingerprint === "string") {
+        marks.set(id, fingerprint);
       }
     }
   } catch { /* malformed / blocked → start empty */ }
@@ -460,8 +464,10 @@ function readUndecodable() {
 function persistUndecodable() {
   try {
     // Cap the map: the ids are small, but this lives in localStorage forever.
-    localStorage.setItem(UNDECODABLE_KEY,
-      JSON.stringify(Object.fromEntries([...undecodable].slice(-500))));
+    localStorage.setItem(UNDECODABLE_KEY, JSON.stringify({
+      v: UNDECODABLE_VERSION,
+      marks: Object.fromEntries([...undecodable].slice(-500)),
+    }));
   } catch { /* storage full / blocked → session-only, still correct */ }
 }
 
@@ -496,18 +502,6 @@ function markUndecodable(id) {
   // when rotation can supply one, otherwise leave the layer empty.
   const next = selection.rotationEnabled ? nextRotationWallpaper() : null;
   applySelection(next ? next.id : "");
-}
-
-/** Pin legacy id-only records to the fingerprint of the current inventory. */
-function pinUndecodable() {
-  let changed = false;
-  for (const [id, mark] of undecodable) {
-    if (mark !== "*") continue;
-    const w = selection.inventory.wallpapers.find((x) => x.id === id);
-    const fingerprint = mediaFingerprint(w);
-    if (fingerprint) { undecodable.set(id, fingerprint); changed = true; }
-  }
-  if (changed) persistUndecodable();
 }
 
 // ── Wallpaper predicates ─────────────────────────────────────────────────────
@@ -571,9 +565,6 @@ async function loadInventory(forceRefresh) {
   if (disposed || epoch !== inventoryEpoch) return;
   selection.loading = false;
   selection.loaded = true;
-  // Legacy id-only undecodable records: pin them to the fingerprint of the
-  // file we just enumerated, so a later file change can free them.
-  pinUndecodable();
 
   // Seed a first rotation group from a playable WE playlist (once only, so
   // deleting every list stays respected across reloads).

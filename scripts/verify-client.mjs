@@ -216,6 +216,10 @@ const localStorageMock = {
       ],
       rotationSeeded: true,
     }),
+    // Pre-2.3.10 verdict format (a bare id list): the file may have been
+    // re-encoded outside the plugin, so the record must be discarded on load
+    // rather than pinned to whatever is on disk today.
+    'wallpaper-engine-dsh:undecodable': JSON.stringify(['c']),
   },
   getItem(k) { return this._store[k] ?? null; },
   setItem(k, v) { this._store[k] = String(v); },
@@ -565,6 +569,11 @@ setTimeout(async () => {
     const cardByTitle = (list, title) => list.find((b) =>
       Array.isArray(b.children) && b.children.some((c) =>
         c && typeof c === 'object' && Array.isArray(c.children) && c.children.includes(title)));
+    // Untagged verdicts (id list / 2.3.9 object) are not proof about today's
+    // bytes: they must be dropped, not pinned, or a file fixed outside the
+    // plugin stays hidden forever.
+    check('legacy undecodable records are discarded on load',
+      Boolean(cardByTitle(cards, 'Clip C')));
     {
       const webCard = cardByTitle(cards, 'Web B');
       check('web card found in the grid', Boolean(webCard));
