@@ -216,10 +216,12 @@ const localStorageMock = {
       ],
       rotationSeeded: true,
     }),
-    // Pre-2.3.10 verdict format (a bare id list): the file may have been
-    // re-encoded outside the plugin, so the record must be discarded on load
-    // rather than pinned to whatever is on disk today.
-    'wallpaper-engine-dsh:undecodable': JSON.stringify(['c']),
+    // A "*" verdict was recorded while the host could not identify the bytes
+    // (pre-2.3.9 host, or a stat that failed). The host now fingerprints the
+    // file, so the verdict must be released on load: the bytes may have been
+    // re-encoded outside the plugin, and the failure ladder records a real
+    // fingerprint again if the file still cannot decode.
+    'wallpaper-engine-dsh:undecodable': JSON.stringify({ v: 1, marks: { b: '*' } }),
   },
   getItem(k) { return this._store[k] ?? null; },
   setItem(k, v) { this._store[k] = String(v); },
@@ -243,11 +245,11 @@ const fetchMock = (url) => {
         { id: 'pl-0', name: 'WE playlist', order: 'sequence', delay: null, wallpaperIds: ['a', 'b'], total: 2, portableCount: 2 },
       ],
       wallpapers: [
-        { id: 'a', title: 'Video A', type: 'video', playable: true, media: `/we-background/media/tokA-${n}`, preview: `/we-background/preview/pA-${n}` },
-        { id: 'b', title: 'Web B', type: 'web', playable: true, media: `/we-background/media/tokB-${n}/index.html`, preview: `/we-background/preview/pB-${n}` },
+        { id: 'a', title: 'Video A', type: 'video', playable: true, fingerprint: '4096:111', media: `/we-background/media/tokA-${n}`, preview: `/we-background/preview/pA-${n}` },
+        { id: 'b', title: 'Web B', type: 'web', playable: true, fingerprint: '2048:222', media: `/we-background/media/tokB-${n}/index.html`, preview: `/we-background/preview/pB-${n}` },
         // Playable but preview-less — the decode-failure path for it must
         // end in a cleared selection, not a dead element on the layer.
-        { id: 'c', title: 'Clip C', type: 'video', playable: true, media: `/we-background/media/tokC-${n}`, preview: null },
+        { id: 'c', title: 'Clip C', type: 'video', playable: true, fingerprint: '1024:333', media: `/we-background/media/tokC-${n}`, preview: null },
       ],
     }),
   });
@@ -571,9 +573,10 @@ setTimeout(async () => {
         c && typeof c === 'object' && Array.isArray(c.children) && c.children.includes(title)));
     // Untagged verdicts (id list / 2.3.9 object) are not proof about today's
     // bytes: they must be dropped, not pinned, or a file fixed outside the
-    // plugin stays hidden forever.
-    check('legacy undecodable records are discarded on load',
-      Boolean(cardByTitle(cards, 'Clip C')));
+    // plugin stays hidden forever. The seeded verdict for "Web B" is tagged
+    // but carries "*" — released because the host now fingerprints the file.
+    check('unverifiable "*" verdict is released on load',
+      !JSON.parse(localStorageMock._store['wallpaper-engine-dsh:undecodable'] || '{}').marks.b);
     {
       const webCard = cardByTitle(cards, 'Web B');
       check('web card found in the grid', Boolean(webCard));
