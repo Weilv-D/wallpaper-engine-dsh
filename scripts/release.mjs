@@ -39,7 +39,7 @@ function preflight() {
   const behind = capture('git rev-list --count main..origin/main');
   if (behind !== '0') die(`origin/main has ${behind} newer commit(s) - git pull first`);
   const ahead = capture('git rev-list --count origin/main..main');
-  if (ahead !== '0') die(`release: local main is ${ahead} commit(s) ahead - git push first`);
+  if (ahead !== '0') die(`local main is ${ahead} commit(s) ahead - git push first`);
 }
 function planTag(level) {
   const version = JSON.parse(readFileSync('package.json', 'utf8')).version;
