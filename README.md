@@ -4,25 +4,88 @@
 
 [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
 
-A DSH bundle that turns your local **Wallpaper Engine** library into the live background of the DSH web GUI (`dsh web`). Video wallpapers play behind the chat, web wallpapers render in place, and everything in between — crossfade transitions, liquid-glass panels, a legibility veil that adapts to any wallpaper, manual framing, rotation lists, search, and a bilingual UI — is controlled from its own dedicated settings section.
+A DSH bundle that turns the local **Wallpaper Engine** library into a living background for DSH. Video wallpapers play behind the chat UI; web wallpapers render directly. Crossfade, liquid-glass panels, a readability veil that adapts to the wallpaper, manual framing, rotation lists, search, and a bilingual UI live in one dedicated settings section.
 
 ## Features
 
-**The library, rendered live.** The grid lists every wallpaper the browser can genuinely render — video and web wallpapers. Scene and application wallpapers are Wallpaper Engine's private `.pkg` scene packages; since no browser can execute them, they are filtered out rather than offered as degraded stills. Everything listed plays for real, badged Video or Web, and a search box narrows large libraries by title or workshop id instantly.
+### Wallpaper list
 
-**Legibility on any wallpaper.** Text stays readable by construction, not by luck. The material is permanently dark — one glass recipe, whatever the shell or OS light/dark setting says — and the veil is always black, so a pitch-black wallpaper can never swallow the UI (pair the shell with its dark theme, which the dark material assumes). On top of that, a Smart veil samples the wallpaper's brightness and its busyness (the standard deviation of luminance) every few seconds and strengthens the veil when a scene drifts too bright or too noisy for light-on-dark text (web wallpapers' pixels are unreadable inside the sandbox, so their preview still stands in as the sample). The glass is no longer a white haze over a base fill but a body sampled from the wallpaper: hue from its average colour, chroma capped at 14% (any more and it reads as coloured plastic), lightness 14-20% (lifted on dark wallpapers), alpha set by brightness and busyness together (0.16–0.34) — so a deep-space scene gets a thin, directional smoke while a poster thickens automatically and presses the colour blocks beneath it down. The edge is modelled as a lit round column rather than a uniform outline: a 1px specular on the top edge, then a 2px decay, a 7px inner reflection and a 0.5px inner hairline, a bounce along the bottom edge, darkened side walls, and a dark outer contour. A single overhead light lays four specular pools (brightest at the corners, a soft band across the top centre, a cool return at the bottom); their strength rises as the wallpaper darkens. They are static by default — the Pointer highlight setting lets the specular follow the mouse across the composer (it repaints that surface every frame, off by default). Refraction is now per surface: each pane rasterises its displacement map at its own pixel size and radius and runs it at the end of the blur chain (blur the melt first, then refract), rebuilt by a ResizeObserver when the shape changes; the displacement peaks at the rim and decays inward to zero at band depth (the measured Apple profile), so the edges compress the scene inward. The Surface refraction setting turns the whole lens layer off for comparison and troubleshooting — plain backdrop blur remains. The old single 256px map stretched across every surface pushed the 720px-wide composer's refraction band to about 61px at its ends and left it near 10px at the top, so the thickness never matched. Elevation has four steps: e0 contact, e1 near, e2 mid, e3 far, with every drop beyond contact carrying the wallpaper's hue so the shadow belongs to the scene instead of punching a grey hole; on a dark scene shadows are all but invisible, and the layering is carried by edge light, body and specular instead. Glass comes in three tiers: T1 for the crop-adjust bar (blur capped at 4px, saturate 1.6); the new-session button and the composer's + and send stay off the lens and ride the shared T2 melt, T2 for the composer, menus and the bottom dock (10px, 1.4), T3 for the settings dialog and full-page workbenches (14px, 1.3, with contrast flattened to 0.9). Content layers no longer wear glass: message bubbles keep only body and edge light with no `backdrop-filter`, and settings cards soften to a translucent token fill — Apple's rule is that glass belongs to the control layer. The bottom dock rises to T2 light glass with a body 0.8× thinner. The composer is the HIG "clear" variant floating over media: when the sampled brightness threatens the theme's text, an inner dimming layer rises up to the 35% ceiling the HIG specifies for that case; bubbles get a denser body instead of the dim layer. The material also reaches surfaces the plugin does not restyle by hand: the shell's other anchored panels consume its `--dsw-menu-backdrop-filter` token, re-pointed at the same tiered chains, and ds-harness-remote's `dshRemotePage` gets the dialog treatment, and dsh-better-sidebar's `data-dsh-bottom-panel` gets T2 light glass with a 0.8x body. The material moves: a registered custom property makes thickness changes glide, every wallpaper switch breathes one rim-light swell through the crossfade, the crop bar springs in, and `prefers-reduced-motion` turns all of it off. Coverage hangs off semantic hooks: menus, the composer, dialogs, overlay panels, the dock and the new-session button each take their tier; submenus (`role="menu"`) take the T2 glass; tooltips get the body tint and the bevel but no backdrop capture — they are read for a second, and a blur is not worth an offscreen pass there. Everything reverts to the host look when the wallpaper is off.
+- Lists only types the browser can truly render: video and web wallpapers.
+- Scene and application wallpapers are Wallpaper Engine's private `.pkg` format; the browser cannot execute them, so they are not listed.
+- Every listed wallpaper actually plays, tagged 视频/网页 (video / web).
+- The search box filters by title or Workshop ID.
 
-**Manual framing.** Pick a base layout — Cover, Contain, Stretch, Original, or Free — then frame the shot yourself. **Adjust** opens the live wallpaper fullscreen: scroll to zoom, drag to pan. In the seamless layouts the picture already fills the screen at 100% — zoom in with the wheel first and panning unlocks (the hint bar says so). In the first four layouts the crop is clamped so the image always fills the screen with no exposed edges; **Free** places the wallpaper at natural size on a black canvas where it can be dragged anywhere, zoomed from 0.1× to 4×, and rotated to any angle (±90° buttons or Alt+drag), with just enough kept on screen that it can never be dragged out of sight. **Mirror** flips the wallpaper horizontally and works in every layout — a flip never exposes an edge. Esc or Done finishes, the framing persists, and **Reset crop** restores the default in one click. Web wallpapers take the same select and the same zoom/pan/rotate framing — the transform applies to the iframe directly.
+### Dark material and legibility
 
-**Four live sliders.** Wallpaper blur, Scrim, Borders, and Glass — every change lands instantly and persists. Blur renders in place: composition, layout, and crop stay identical at every blur level, and within one blur radius of the screen edge the picture fades softly into the veil beneath the UI chrome. A whisper of dither noise keeps smooth gradients band-free; at zero blur the media bypasses the filter pipeline entirely for bit-exact pixels. The Glass slider drives the three tiers' blur ceilings (4/10/14px); the body's thickness follows the wallpaper's brightness and busyness, and edge-specular strength rises as the wallpaper darkens; refraction has its own Surface refraction toggle (on by default) — off leaves plain backdrop blur; saturation and contrast are fixed per tier (1.6 / 1.4 with 0.92 / 1.3 with 0.90) — flattening the backdrop's contrast is what quiets a busy wallpaper, since deepening the body alone turns it into dead grey, and the chain no longer reproduces the host recipe verbatim. At zero the whole glass filter chain collapses to none and the surfaces keep only body and edge light. The Borders slider drives the glass's own hairline rim: the 0.35 default is a host-level ring, the ceiling roughly 2.6x the strength for busy wallpapers, and zero removes the rim leaving only the bevels — the host's own control strokes (menus, cards, buttons) keep their host values and are no longer brightened.
+- The material is permanently dark. Set the shell theme to dark; the dark material assumes it.
+- The veil is always black; even a pitch-black wallpaper cannot swallow the UI.
+- The Smart veil samples the wallpaper's brightness and busyness (the standard deviation of luminance) every few seconds and strengthens the veil when a scene drifts too bright or too busy.
+- Web wallpaper pixels are unreadable inside the sandbox, so the Smart veil samples their preview image instead.
+- The glass body is sampled from the wallpaper: hue from its average colour, chroma capped at 14%. The body lightens as the scene darkens; its alpha follows brightness and busyness together (0.16–0.34).
+- The edge is modelled as a lit column: a specular along the top, a bounce along the bottom, darkened side walls, and a dark outer contour. Edge light strengthens as the wallpaper darkens.
+- The specular is static by default; the Pointer highlight setting makes it follow the mouse across the composer (repaints each frame, off by default).
+- When the composer floats over bright content, an inner dimming layer rises to a 35% ceiling (the HIG value for this case).
 
-**Rotation lists.** Build any number of carousel lists, each with its own wallpapers, interval (1–120 min), and order (sequence or random). Auto-rotate arms once the active list holds at least two usable wallpapers; the status row always reports whether rotation is actually running. Your first playable Wallpaper Engine playlist is imported automatically on first run; any other playlist can be imported into any list.
+### Refraction
 
-**Resource monitor.** A live FPS readout with a low-framerate hint, plus optional auto-pause when the tab is hidden or the battery runs low. `prefers-reduced-motion` starts videos paused.
+- Each pane rasterises its displacement map at its own pixel size and radius; `feDisplacementMap` sits at the end of the filter chain — blur first, then refract.
+- Displacement peaks at the rim and decays inward to zero. The edges compress the scene inward; this is where the liquid read comes from.
+- A ResizeObserver rebuilds the map when a pane changes size.
+- The Surface refraction setting turns the whole lens layer off — plain backdrop blur remains.
+- Refraction renders in Chromium-family engines only (see Limitations).
 
-**Bilingual.** The UI follows the shell's Language setting (Chinese/English) with a manual override in the picker.
+### Tiers and coverage
 
-**Resilient playback.** Switches and clears crossfade smoothly. Media that repeatedly fails to decode retries once with fresh tokens, then falls back to the preview still with a note in the status row; an entry with nothing to fall back on is cleared rather than left on a dead layer — and the next Refresh retries the live media. Refresh re-issues every URL and swaps it into the live element in place, so playback position survives. Background inventory rebuilds reuse the same URLs and never touch a playing stream.
+| Tier | Surfaces | Blur cap |
+|---|---|---|
+| T1 | Crop-adjust bar | 4px |
+| T2 | Composer, menus, dock, new-session button | 10px |
+| T3 | Settings dialog, full-page workbenches | 14px |
+
+- Glass belongs to the control layer: message bubbles keep only body and edge light, with no backdrop capture; settings cards soften to a translucent token fill.
+- Menus, dialogs, overlay panels and the dock take their own tier; submenus (`role="menu"`) take T2.
+- Tooltips take the body tint and the bevel, with no backdrop capture.
+- The shell's other floating panels consume the `--dsw-menu-backdrop-filter` token, re-pointed at the same filter chains; ds-harness-remote's `dshRemotePage` gets the dialog treatment; dsh-better-sidebar's bottom panel is T2 light glass.
+
+### Manual framing
+
+1. Pick the base arrangement under 排布: fill, contain, fill-stretch, native, free.
+2. Choose 调整画面 to expand the wallpaper full-screen; scroll to zoom, drag to pan.
+3. In free mode, rotate freely (±90° buttons or Alt+drag) and zoom between 0.1–4×.
+4. Crops keep the picture covering the screen; free mode places the wallpaper on a black canvas and always keeps a sliver in view.
+5. 镜像 mirrors the wallpaper, in every arrangement.
+6. Esc or 完成 exits and saves; 重置裁剪 restores the defaults.
+
+### Four live sliders
+
+- **Wallpaper blur, Scrim, Borders, Glass** — every change lands instantly and persists.
+- Blur renders in place: composition, layout and crop stay identical at every level.
+- The Glass slider drives the tiers' blur ceilings (4 / 10 / 14px) and tops out at the heaviest cap. At zero the chains collapse to none; surfaces keep body and edge light.
+- The Borders slider drives the glass's own hairline ring: 0.35 is the baseline, the ceiling is roughly 2.6×, and zero removes the ring, leaving the bevels. The host's own control strokes keep their host values.
+- Wallpaper blur adds a whisper of dither noise against gradient banding; at zero the media bypasses the filter pipeline entirely.
+
+### Rotation lists
+
+- Create any number of lists, each with its own wallpaper set, interval (1–120 minutes) and order (sequential / random).
+- A list auto-rotates only while it holds at least two playable wallpapers; the status line shows whether rotation is running.
+- The first run imports the first playable Wallpaper Engine playlist; other playlists import into any list at any time.
+
+### Resource monitor
+
+- A live frame-rate readout with a low-fps hint.
+- Optional auto-pause when the page hides or the battery drops below 20%.
+- Videos start paused under `prefers-reduced-motion`.
+
+### Bilingual UI
+
+The UI follows the DSH 语言 (language) setting (中文 / English), or a manual choice in the panel.
+
+### Playback-failure recovery
+
+- Switching and closing both crossfade.
+- On repeated decode failures: retry once with fresh tokens; then fall back to the preview image with a status-line note; items without a preview clear the selection instead of showing a black screen.
+- Re-selecting a demoted wallpaper is a retry: demotion and the failure count clear together.
+- 刷新 rescans the library and retries the original media; the playing element swaps its address in place and keeps its progress. Inventory rebuilds in the background reuse the same URLs and never interrupt playback.
 
 ## Install
 
@@ -30,72 +93,86 @@ A DSH bundle that turns your local **Wallpaper Engine** library into the live ba
 dsh plugin --profile web add wallpaper-engine-dsh
 ```
 
-Or from a checkout (live-linked for development):
+Or install from a source checkout (handy for development; changes take effect live):
 
 ```sh
 git clone https://github.com/Weilv-D/wallpaper-engine-dsh.git
-dsh plugin --profile web add link:<absolute path to the cloned folder>
+dsh plugin --profile web add link:<absolute path to the clone>
 ```
 
-Restart `dsh web`, open **Settings** from the sidebar, and pick **Wallpaper**.
+Restart `dsh web`, open 设置 from the session list sidebar, and pick **壁纸背景**.
 
 ## Usage
 
-1. Pick a wallpaper from the thumbnail grid — it fades in behind the app. Use the search box to narrow large libraries.
-2. **Pause/Play** controls video playback; **Close** fades the wallpaper out; **Refresh** rescans the library — new workshop subscriptions appear without reloading the page, and any demoted wallpaper retries its live media.
-3. Tune the blend with the sliders. On busy wallpapers, raise **Scrim** and **Borders** until text is comfortable; Smart veil handles it automatically when enabled. The UI follows DSH's light/dark theme on its own.
-4. Use the **Fit** row for the base layout, then **Adjust** to pan and zoom the crop directly on the canvas.
-5. Create rotation lists with **New**, fill them from the grid or import a WE playlist, then enable **Auto-rotate**.
-6. The resource row shows the current frame rate and the two auto-pause switches.
+1. Pick a wallpaper from the thumbnail grid; it fades in behind the UI. Use search for large libraries.
+2. **暂停/播放** controls video; **关闭** fades it out; **刷新** rescans the library.
+3. Tune the blend with the sliders. Raise **暗化** and **边框** until text reads clearly. With the Smart veil on, this is automatic.
+4. 排布 sets the base arrangement; 调整画面 pans with the mouse and zooms with the wheel.
+5. Create a rotation list with **新建**, pick wallpapers or import a WE playlist, then enable **自动轮转**.
+6. The resource row shows the frame rate and the two auto-pause switches.
 
-Your selection and every knob persist in the browser's `localStorage`.
+All choices and adjustments persist in the browser's `localStorage`.
 
 ## Desktop
 
-The desktop shell and the browser share the same frontend and the same injection pipeline; the `platform: "web"` declaration works as-is, with no separate desktop package.
+Desktop shares the browser's frontend and injection pipeline. The `dsh.client` manifest declares `platform: "web"`; no separate desktop package is needed.
 
-- **Windows**: the main window is opaque and the wallpaper renders at the DOM layer. The window-controls strip at the top is an opaque host-owned overlay; the plugin blends the wallpaper into it with a short fade in a pinned dark tone (#1b1b1c), and the fade switches off in fullscreen.
-- **macOS**: the shell sidebar is the system's native vibrant material, so what shows behind the wallpaper there is the system material rather than the wallpaper itself — host behaviour.
-- **With system transparency effects off** (`prefers-reduced-transparency`), all glass and blur falls back to solid surfaces; the wallpaper stays, and legibility is carried by the veil and the solids. With **increase contrast** on (`prefers-contrast: more`), the glass fills go near-opaque and the hairline ring steps up to a solid border, while the blur itself stays.
+- **Windows**: the main window is opaque; the wallpaper renders in the DOM layer. The host owns a solid overlay strip for the window controls; the plugin blends the wallpaper into it with a short fade in a pinned dark tone (`#1b1b1c`), disabled in fullscreen.
+- **macOS**: the shell sidebar is the system's native vibrant material. When the wallpaper plays behind it, the system material shows instead of the wallpaper.
+- With transparency effects off (`prefers-reduced-transparency`), glass and blur revert to solid surfaces; the wallpaper stays, and the veil plus the solids carry legibility.
+- Switching on increased contrast (`prefers-contrast: more`) turns the glass body near-opaque and the hairline ring into a real border; blur itself stays.
 
 ## How it works
 
 The bundle has two halves:
 
-- A **host plugin** discovers the Wallpaper Engine install (Steam registry entry, `libraryfolders.vdf`, standard probe paths across Windows/macOS/Linux), enumerates projects from the default/my-projects folders and the workshop, keeps only the browser-renderable kinds, and serves a JSON inventory plus the media bytes over same-origin routes:
+- **Host plugin**: discovers the Wallpaper Engine install (Steam registry keys, `libraryfolders.vdf`, standard Windows/macOS/Linux paths), enumerates the default projects, my projects and Workshop directories, keeps only browser-renderable types, and serves data over same-origin routes:
   - `GET /we-background/inventory[?refresh=1]`
-  - `GET /we-background/media/<token>[/<entry file or asset>…]` — with HTTP Range support for video seeking. Web wallpapers are addressed at their entry file (e.g. `…/media/<token>/index.html`), so the document URL mirrors the project directory and the wallpaper's own relative references (scripts, styles, images, fetches) resolve exactly where Wallpaper Engine would resolve them. Media responses carry `Access-Control-Allow-Origin: *` so wallpapers inside the sandboxed iframe (an opaque origin) can still `fetch()` their own assets.
+  - `GET /we-background/media/<token>[/<entry file or sub-resource>…]` — HTTP Range supported, so video seeking works. A web wallpaper's URL points straight at its entry file; relative references inside the wallpaper resolve per Wallpaper Engine's own rules. Media responses carry `Access-Control-Allow-Origin: *`, so sandboxed iframes can read their own resources.
   - `GET /we-background/preview/<token>`
-- A **browser plugin** renders the chosen wallpaper on a fixed layer behind the app frame, contributes the settings UI, and keeps every effect on DSH design tokens so themes apply cleanly.
+- **Browser plugin**: renders the selected wallpaper on a fixed layer below the app frame and contributes the settings UI. Every effect reads DSH design tokens.
 
-Media serving is defensive by design: tokens are unguessable 72-bit values, stable across inventory rebuilds (an in-flight stream is never killed by a background refresh) and re-minted only on an explicit refresh; sub-asset paths are contained lexically and re-verified against the real filesystem so symlinks cannot escape their wallpaper directory; HTML and SVG responses carry a `sandbox` CSP so they can never execute against the DSH origin; the wallpaper iframe additionally pins a neutral `color-scheme`, so the shell's dark-theme scheme never leaks into — and breaks — third-party wallpaper apps; the wildcard CORS on media only lets a caller who already knows a token read bytes it could already request — the token stays the capability, and the server is loopback-only; and responses that would come up short destroy themselves rather than truncate silently. The host answers from a 30-second inventory cache, resolves discovery asynchronously off the request path, and caches it for ten minutes. The bundle registers no model tools and adds no prompt text.
+Media service hardening:
+
+- Tokens are unguessable 72-bit random values; they stay stable across inventory rebuilds and regenerate only on an explicit refresh.
+- Sub-resource paths pass a lexical containment check, then a real-filesystem recheck; symlinks cannot point outside the wallpaper directory.
+- HTML and SVG responses carry a `sandbox` CSP and cannot execute as the DSH origin.
+- Wallpaper iframes pin a neutral `color-scheme`; the shell's dark theme cannot leak into third-party wallpapers.
+- The CORS wildcard only lets the token holder read files it could already request; the whole service listens on loopback only.
+- Truncated-length responses terminate instead of ending silently short.
+- The inventory caches for 30 seconds on the host; install discovery runs off the request path and caches for 10 minutes.
+- The plugin registers no model tools and occupies no prompt.
 
 ## Limitations
 
-- Scene and application wallpapers are not listed: they are Wallpaper Engine's private `.pkg` scene packages, and their live animation can only be rendered by Wallpaper Engine itself on the desktop.
-- Web wallpapers run isolated from the page's storage, so ones that persist state across loads won't keep it.
-- Web wallpapers with sound may stay silent until you interact with the page — browsers gate audio in sandboxed documents on a user gesture, and wallpapers that rely on Wallpaper Engine's system-audio feed (visualizers) have no signal to draw from.
-- Video codecs are bounded by what the browser can decode. H.264/AVC, VP8/VP9, and AV1 play natively; workshop videos compressed with H.265/HEVC cannot be software-decoded on most machines — previously a solid black screen, now detected as "playing but zero decoded frames" and automatically demoted to the preview still with a status note. Transcoding to H.264 mp4 or VP9 webm restores full playback.
-- The glass effect reads DSH design tokens; if a future shell redesign renames them, frosting degrades to plain transparency.
-- Surface refraction (the per-surface displacement lens) renders in Chromium-family engines only: Safari and Firefox parse `backdrop-filter: url()` and then drop the whole chain, so the plugin gates it by UA and falls back to the plain blur recipe — the Electron desktop is unaffected.
+- Scene and application wallpapers are not listed: they are Wallpaper Engine's private `.pkg` packages, which a browser cannot execute.
+- Web wallpapers are storage-isolated; wallpapers that save state across loads cannot keep it.
+- Web wallpapers with sound stay silent until you interact with the page (sandboxed audio autoplay rules); wallpapers depending on Wallpaper Engine's system audio input have no signal to draw.
+- Video codecs follow the browser's decoder support: H.264, VP8, VP9 and AV1 play directly; H.265/HEVC cannot software-decode on most machines. When a video claims to play but decodes no frames, it demotes to the preview image with a status-line note. Transcode to an H.264 mp4 or a VP9 webm for full playback.
+- The glass reads DSH design tokens; if a shell refactor renames them, the glass degrades to a plain translucent fill.
+- Surface refraction renders in Chromium-family engines only: Safari and Firefox parse `backdrop-filter: url()` and then drop the whole chain, so the plugin gates it by UA and falls back to plain blur. The Electron desktop is unaffected.
 
 ## Development
 
 ```sh
-npm install        # builds lib/client.js via the prepare hook
-npm test           # unit tests for the pure core + wire-level host integration
-npm run build      # regenerate lib/client.js from src/client.js
-npm run verify     # boot the emitted bundle in a vm sandbox and assert behaviour
+npm install        # the prepare hook builds lib/client.js
+npm test           # core unit tests + host integration tests
+npm run build      # rebuild lib/client.js from src/client.js
+npm run verify     # boots the bundle in a vm sandbox and asserts behaviour
 ```
 
-Layout: `lib/core.js` (pure, tested logic), `lib/index.js` (host plugin), `src/client.js` (browser source) → `lib/client.js` (built artifact; do not hand-edit). `npm run prepublishOnly` runs the full gate: test → build → verify. The liquid-glass research brief (layer model, refraction profile, Chromium constraints, evidence-graded) lives in `liquid-glass-report.zh.md`.
+- `lib/core.js`: pure logic, unit-tested.
+- `lib/index.js`: host plugin.
+- `src/client.js`: browser source; the build artifact is `lib/client.js`, do not hand-edit it.
+- `npm run prepublishOnly` runs the full gate: test → build → verify.
+- The liquid-glass research brief (layer model, refraction profile, Chromium constraints, evidence-graded) lives in `liquid-glass-report.zh.md`.
 
-## Releasing
+## Releases
 
-Releases publish automatically via GitHub Actions and npm Trusted Publishing (OIDC, no stored tokens). One command does everything locally:
+Publishing runs on GitHub Actions through npm Trusted Publishing (OIDC), no stored token. Locally one command suffices:
 
 ```sh
 npm run release          # patch bump; also release:minor / release:major
 ```
 
-It bumps `version`, commits, tags `v<version>`, and pushes both. The tag push triggers the publish workflow: full gate → tag ↔ version check → `npm publish --provenance` → the GitHub Release is created automatically with generated notes.
+It bumps the version, commits, tags `v<version>` and pushes both. The tag push triggers the publish workflow: full gate → tag/version match → `npm publish --provenance` → an automatic GitHub Release with notes.
