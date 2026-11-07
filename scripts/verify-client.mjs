@@ -476,9 +476,9 @@ setTimeout(async () => {
   const props = bodyEl.style._props;
   // The veil OPPOSES the text colour: light theme (dark text) veils WHITE,
   // dark theme (light text) veils BLACK — readable over any wallpaper.
-  check('scrim veil is black (material dark-pinned)', props['--webg-scrim-color'] === 'rgba(0,0,0,0.25)',
+  check('scrim veil is black (material dark-pinned)', props['--webg-scrim-color'] === 'rgba(0,0,0,0.18)',
     props['--webg-scrim-color']);
-  check('glass blur css var default', props['--webg-blur'] === '8px', props['--webg-blur']);
+  check('glass blur css var default', props['--webg-blur'] === '5px', props['--webg-blur']);
   check('media filter is none at zero blur (bit-exact pixels)', props['--webg-media-filter'] === 'none',
     props['--webg-media-filter']);
   check('noise overlay hidden at zero blur', props['--webg-noise-display'] === 'none',
@@ -488,7 +488,7 @@ setTimeout(async () => {
   // flattening (0.92) — the flattening is what keeps text readable over a
   // saturated poster without stacking more fill.
   check('backdrop chain var default (T2 blur, tier vibrancy, flattened tone)',
-    props['--webg-backdrop'] === 'blur(8px) saturate(1.4) brightness(1.04) contrast(0.92)',
+    props['--webg-backdrop'] === 'blur(5px) saturate(1.4) brightness(1.1) contrast(0.92)',
     props['--webg-backdrop']);
   check('tier chains are all written for the css tiers to pick up',
     /^blur\(\d+px\) saturate\(1\.6\) brightness\([\d.]+\) contrast\(1\)$/.test(props['--webg-chain-t1']) &&
@@ -498,7 +498,7 @@ setTimeout(async () => {
   check('adapt-dim idle at zero luminance evidence',
     props['--webg-adapt-dim'] === 'rgba(0,0,0,0)', props['--webg-adapt-dim']);
   check('glass body takes the wallpaper tint, not a fixed fill',
-    props['--webg-tint-a'] === '0.335' && props['--webg-tint-s'] === '6.2%',
+    props['--webg-tint-a'] === '0.201' && props['--webg-tint-s'] === '6.2%',
     props['--webg-tint-a'] + ' / ' + props['--webg-tint-s']);
   check('body lens gate attribute set', bodyEl.attributes['data-webg-lens'] === '');
   // The lens is per surface: a single shared 256px map stretched across every
@@ -895,10 +895,10 @@ setTimeout(async () => {
       const glassSlider = sliders[3];
       glassSlider.props.onChange({ target: { value: '40', style: { setProperty() {} } } });
       check('glass 40 caps the T2 melt at the tier ceiling',
-        bodyEl.style._props['--webg-backdrop'] === 'blur(10px) saturate(1.4) brightness(1.04) contrast(0.92)',
+        bodyEl.style._props['--webg-backdrop'] === 'blur(10px) saturate(1.4) brightness(1.1) contrast(0.92)',
         bodyEl.style._props['--webg-backdrop']);
       check('rim strength stays wallpaper-bound (slider-independent)',
-        bodyEl.style._props['--webg-rim'] === '0.618',
+        bodyEl.style._props['--webg-rim'] === '0.830',
         bodyEl.style._props['--webg-rim']);
       glassSlider.props.onChange({ target: { value: '0', style: { setProperty() {} } } });
       check('glass 0 collapses the chain to none (no filter pipeline)',
@@ -992,13 +992,13 @@ setTimeout(async () => {
         // bright content dims the melt, raises the clear-variant dim to the
         // HIG 35% ceiling; dark content lifts the melt to the clamp.
         check('bright frame dims the glass (adaptive luminosity)',
-          bodyEl.style._props['--webg-glass-brightness'] === '0.96',
+          bodyEl.style._props['--webg-glass-brightness'] === '1.05',
           bodyEl.style._props['--webg-glass-brightness']);
         check('bright frame raises the clear-variant dim to the HIG ceiling',
           bodyEl.style._props['--webg-adapt-dim'] === 'rgba(0,0,0,0.35)',
           bodyEl.style._props['--webg-adapt-dim']);
         check('backdrop chain embeds the adaptive brightness',
-          bodyEl.style._props['--webg-backdrop'].includes('brightness(0.96)'),
+          bodyEl.style._props['--webg-backdrop'].includes('brightness(1.05)'),
           bodyEl.style._props['--webg-backdrop']);
         mockCanvasPixels = black;
         liveVideo._listeners.loadeddata();
@@ -1006,7 +1006,7 @@ setTimeout(async () => {
           bodyEl.style._props['--webg-scrim-color'] === 'rgba(0,0,0,0.25)',
           bodyEl.style._props['--webg-scrim-color']);
         check('dark frame earns only a whisper of lift (no grey smoke)',
-          bodyEl.style._props['--webg-glass-brightness'] === '1.06',
+          bodyEl.style._props['--webg-glass-brightness'] === '1.125',
           bodyEl.style._props['--webg-glass-brightness']);
         check('dark frame drops the clear-variant dim to zero',
           bodyEl.style._props['--webg-adapt-dim'] === 'rgba(0,0,0,0)',

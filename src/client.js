@@ -272,9 +272,9 @@ function S() {
 
 // ── Defaults ─────────────────────────────────────────────────────────────────
 const DEFAULTS = {
-  scrim: 0.25,
+  scrim: 0.18,
   border: 0.35,
-  blur: 8, // liquid zone: clearest band of the melt
+  blur: 5, // clearest band of the melt; past ~10 it reads frosted
   wallpaperBlur: 0,
   rotationEnabled: false,
   rotationInterval: 30,
@@ -1368,12 +1368,12 @@ function materialTokens() {
     sat: Math.min(0.14, 0.055 + 0.075 * chroma),
     // Dark wallpaper lifts the body: a near-black fill over a near-black
     // scene reads as a hole, not as glass with a body.
-    lightness: 9 + 6 * (1 - lum),
-    tintA: Math.min(0.62, Math.max(0.26, 0.30 + 0.10 * lum + 0.24 * busy)),
+    lightness: 14 + 6 * (1 - lum),
+    tintA: Math.min(0.34, Math.max(0.16, 0.18 + 0.06 * lum + 0.10 * busy)),
     // Dark wallpaper: stronger rim (the edge is the only thing that can
     // separate glass from black), softer shadow.
-    rim: 0.54 + 0.12 * (1 - lum),
-    spec: 0.22 + 0.09 * (1 - lum),
+    rim: 0.70 + 0.20 * (1 - lum),
+    spec: 0.32 + 0.16 * (1 - lum),
     shadowK: 0.55 + 0.45 * lum,
     busy,
     lum,
@@ -1888,13 +1888,13 @@ function applyEffects() {
   // it a whisper (a full lift turned near-black backdrops into grey smoke —
   // the opposite of the clear read Apple's dark glass keeps). No luminance
   // evidence (null, before the first sample) → the neutral 1.04 base.
-  let glassBright = 1.04;
+  let glassBright = 1.10;
   if (sampledLuminance !== null) {
     // Asymmetric on purpose: bright content may DIM the melt (that helps
     // the light text), but dark content earns only a whisper of lift.
-    const pull = Math.max(0, sampledLuminance - 0.5) * 0.16;
-    const lift = Math.max(0, 0.5 - sampledLuminance) * 0.04;
-    glassBright = Math.round(Math.max(0.94, Math.min(1.12, 1.04 - pull + lift)) * 1000) / 1000;
+    const pull = Math.max(0, sampledLuminance - 0.5) * 0.10;
+    const lift = Math.max(0, 0.5 - sampledLuminance) * 0.05;
+    glassBright = Math.round(Math.max(1.02, Math.min(1.18, 1.10 - pull + lift)) * 1000) / 1000;
   }
   // glass-brightness stays a standalone knob for inspection even though the
   // chain below embeds it — the one value NOT derivable from the sliders.
@@ -2831,10 +2831,10 @@ const CSS = `
     --webg-tint-h: 220;
     --webg-tint-h2: 40;
     --webg-tint-s: 8%;
-    --webg-tint-l: 9%;
-    --webg-tint-a: 0.26;
-    --webg-rim: 0.58;
-    --webg-spec: 0.2;
+    --webg-tint-l: 14%;
+    --webg-tint-a: 0.18;
+    --webg-rim: 0.72;
+    --webg-spec: 0.32;
     --webg-shadow-k: 0.8;
     --webg-k: 1;
     --webg-body: hsl(var(--webg-tint-h) var(--webg-tint-s) var(--webg-tint-l) / calc(var(--webg-tint-a) * var(--webg-k)));
