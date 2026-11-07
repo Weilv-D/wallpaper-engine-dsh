@@ -958,8 +958,8 @@ setTimeout(async () => {
         String(composerFixture.style._props['--webg-lens-chain'] || '').indexOf('url(#' + (lensSlot ? lensSlot.id : '') + ')') >= 0,
         composerFixture.style._props['--webg-lens-chain']);
       const disp = lensFilter && lensFilter.children[1];
-      check('displacement scale pins to band * 2.3',
-        Boolean(disp) && disp.attributes.scale === "28",
+      check('displacement scale pins to band * 4',
+        Boolean(disp) && disp.attributes.scale === "64",
         disp && disp.attributes.scale);
       windowMock.matchMedia = (q) => ({ matches: String(q).indexOf('reduced-transparency') >= 0 });
       glassSlider.props.onChange({ target: { value: '17', style: { setProperty() {} } } });

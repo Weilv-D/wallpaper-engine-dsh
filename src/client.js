@@ -1399,32 +1399,15 @@ function tierChain(tier, blur, bright) {
   return "blur(" + b + "px) saturate(1.4) brightness(" + bright + ") contrast(0.92)";
 }
 
-// A lens surface splits its tier blur in two: a light CSS blur BEFORE the
-// displacement (Apple order: blur, then refract) and the remainder after it.
-// Gaussian passes compose in quadrature, so the halves are 0.6 / 0.8 -
-// sqrt(0.6^2 + 0.8^2) = 1.0 - to land exactly on the tier blur plain
-// surfaces get at the same slider position. The CSS half also keeps the
-// surface legible if the SVG filter is ever dropped.
+// The blur caps, single-sourced: tierChain consumes this directly and the
+// lens reads the same cap, so plain and lensed surfaces always agree about
+// how melted the backdrop is at a given slider position.
 function tierBlur(tier, blur) {
   if (blur <= 0) return 0;
   if (tier === "t1") return Math.min(4, blur);
   if (tier === "t3") return Math.min(14, Math.max(blur, 6));
   return Math.min(10, blur);
 }
-
-function lensChain(tier, blur, bright) {
-  const b = tierBlur(tier, blur);
-  if (b <= 0) return "none";
-  const head = "blur(" + (b * 0.6).toFixed(1) + "px) ";
-  if (tier === "t1") {
-    return head + "saturate(1.6) brightness(" + bright + ") contrast(1)";
-  }
-  if (tier === "t3") {
-    return head + "saturate(1.3) brightness(" + bright + ") contrast(0.9)";
-  }
-  return head + "saturate(1.4) brightness(" + bright + ") contrast(0.92)";
-}
-
 // ── Per-surface lenses (v3) ─────────────────────────────────────────────────
 // Timers live behind these two helpers: the client must also load in minimal
 // harnesses (the verify sandbox) that have no window.setTimeout.
@@ -1448,12 +1431,12 @@ function cancelLater(id) {
 // each hero surface gets a map rasterised at its own pixel size, with the
 // band in absolute px and the radius read from its computed style.
 const LENS_SURFACES = [
-  { sel: "[data-composer-card]", band: 12, tier: "t2" },
-  { sel: "[data-menu-material]", band: 9, tier: "t2", menuToken: true },
-  { sel: '[data-composer-dock] [class*="_panel"]', band: 9, tier: "t2" },
-  { sel: '[class*="_dialog_"]', band: 14, tier: "t3" },
-  { sel: '[class$="_overlay"] > [class$="_panel"]', band: 14, tier: "t3", pseudo: true },
-  { sel: ".webg-adjust-bar", band: 6, tier: "t1" },
+  { sel: "[data-composer-card]", band: 16, tier: "t2" },
+  { sel: "[data-menu-material]", band: 12, tier: "t2", menuToken: true },
+  { sel: '[data-composer-dock] [class*="_panel"]', band: 12, tier: "t2" },
+  { sel: '[class*="_dialog_"]', band: 18, tier: "t3" },
+  { sel: '[class$="_overlay"] > [class$="_panel"]', band: 18, tier: "t3", pseudo: true },
+  { sel: ".webg-adjust-bar", band: 8, tier: "t1" },
 ];
 const LENS_SELECTOR = LENS_SURFACES.map((s) => s.sel).join(",");
 let lensSlots = [];
@@ -1643,24 +1626,24 @@ function paintLensSlot(el) {
   slot.image.setAttribute("height", String(h + pad * 2));
   // Peak rim displacement = band * 1.15 CSS px. The map encodes unit
   // direction x decay (magnitude <= 1), so scale = 2 * peak.
-  slot.disp.setAttribute("scale", String(Math.round(band * 2.3)));
+  slot.disp.setAttribute("scale", String(Math.round(band * 4)));
   // The filter blur runs after the displacement; as the quadrature pair of
   // the CSS head blur it lands the surface exactly on its tier blur.
-  const rest = tierBlur(slot.spec.tier, selection.blur) * 0.8;
+  const rest = 0.35; // anti-alias only: the tier blur runs after the bend
   slot.soften.setAttribute("stdDeviation", rest.toFixed(2));
-  const chain = lensChain(slot.spec.tier, selection.blur, lastGlassBright);
+  const chain = tierChain(slot.spec.tier, selection.blur, lastGlassBright);
   if (chain === "none") { clearLensChain(el); return; }
   const filterUrl = " url(#" + slot.id + ")";
   if (slot.spec.pseudo) {
     // The material lives on the panel's ::before (containing-block rule), so
     // the var must be set on the host and inherited by the pseudo.
-    el.style.setProperty("--webg-lens-chain", chain + filterUrl);
+    el.style.setProperty("--webg-lens-chain", filterUrl + " " + chain);
   } else if (slot.spec.menuToken) {
     // Host menus consume --dsw-menu-backdrop-filter on the menu element
     // itself; an inline value wins over the body-level repoint.
-    el.style.setProperty("--dsw-menu-backdrop-filter", chain + filterUrl);
+    el.style.setProperty("--dsw-menu-backdrop-filter", filterUrl + " " + chain);
   } else {
-    el.style.setProperty("--webg-lens-chain", chain + filterUrl);
+    el.style.setProperty("--webg-lens-chain", filterUrl + " " + chain);
   }
   slot.w = w;
   slot.h = h;
