@@ -417,7 +417,7 @@ check('style tag injected on apply', headEl.children.some((n) => n.tagName === '
 
   // Layer-count guard. --webg-glass-layers expands --webg-spec-gloss into FOUR
   // radials, so the resolved stack is veil + 4 pools + gloss + sheen + pointer
-  // = 8 layers, none of them tiled. A sizes/repeats list shorter than the stack
+  // = 7 layers, none of them tiled. A sizes/repeats list shorter than the stack
   // cycles from the start and tiles one gradient — the patchy-squares
   // regression this check pins down.
   {
@@ -441,7 +441,7 @@ check('style tag injected on apply', headEl.children.some((n) => n.tagName === '
     const sizes = entries(token("--webg-glass-sizes"));
     const repeats = entries(token("--webg-glass-repeats"));
     check('glass layer lists stay in step with the four specular radials',
-      pools === 4 && sizes === 8 && repeats === 8,
+      pools === 4 && sizes === 7 && repeats === 7,
       pools + ' pools / ' + sizes + ' sizes / ' + repeats + ' repeats');
   }
 }

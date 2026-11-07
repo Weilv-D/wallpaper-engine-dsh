@@ -2799,7 +2799,7 @@ const CSS = `
   @property --webg-rim { syntax: '<number>'; inherits: true; initial-value: 0.58; }
   @property --webg-adapt-dim { syntax: '<color>'; inherits: true; initial-value: rgba(0, 0, 0, 0); }
   /* Material permanently dark (user decision, 2026-11-06): one glass recipe,
-     whatever the shell or OS theme says. The stack: 155° sheen → hot top
+     whatever the shell or OS theme says. The stack: hot top
      bevel → cool subsurface glow (dispersion hint) → bottom catch → hairline
      ring + dark outer contour (the thickness sandwich, both riding the
      borders slider) → near + ambient drops. */
@@ -2824,36 +2824,28 @@ const CSS = `
     /* The gloss: a whisper of sky at the top, a cool floor at the bottom.
        It is a body gradient (under the content), not a backdrop effect. */
     --webg-gloss: linear-gradient(180deg,
-      hsl(0 0% 100% / calc(0.11 * var(--webg-rim))),
-      hsl(0 0% 100% / calc(0.03 * var(--webg-rim))) 22%,
+      hsl(0 0% 100% / calc(0.07 * var(--webg-rim))),
+      hsl(0 0% 100% / calc(0.02 * var(--webg-rim))) 22%,
       hsl(0 0% 100% / 0) 46%,
       hsl(220 40% 3% / calc(0.16 * (1.2 - var(--webg-rim)))));
-    /* The sheen: one soft diagonal band of reflected sky. A body with only a
-       top gradient reads as matte plastic; a single off-axis reflection is
-       what makes the surface read as a polished pane. */
-    --webg-sheen: linear-gradient(112deg,
-      hsl(0 0% 100% / 0) 6%,
-      hsl(0 0% 100% / calc(0.10 * var(--webg-spec))) 26%,
-      hsl(0 0% 100% / calc(0.03 * var(--webg-spec))) 36%,
-      hsl(0 0% 100% / 0) 52%);
     /* Specular: four pools driven by one light direction (overhead). The
        corners take the two bright arcs, the centre a soft band, and the
        bottom a cool return — the same read as Apple's two rim lights, the
        second at 0.8× the first. */
     --webg-spec-gloss:
-      radial-gradient(34% 62% at 1% -8%, hsl(0 0% 100% / calc(var(--webg-spec) * 0.62)), transparent 62%),
-      radial-gradient(34% 62% at 99% -8%, hsl(0 0% 100% / calc(var(--webg-spec) * 0.56)), transparent 62%),
-      radial-gradient(76% 22% at 50% -6%, hsl(0 0% 100% / calc(var(--webg-spec) * 0.34)), transparent 70%),
-      radial-gradient(64% 30% at 50% 106%, hsl(var(--webg-tint-h2) 40% 88% / calc(var(--webg-spec) * 0.26)), transparent 72%);
+      radial-gradient(22% 38% at 1% -6%, hsl(0 0% 100% / calc(var(--webg-spec) * 0.34)), transparent 58%),
+      radial-gradient(22% 38% at 99% -6%, hsl(0 0% 100% / calc(var(--webg-spec) * 0.30)), transparent 58%),
+      radial-gradient(56% 13% at 50% -5%, hsl(0 0% 100% / calc(var(--webg-spec) * 0.18)), transparent 64%),
+      radial-gradient(46% 18% at 50% 104%, hsl(var(--webg-tint-h2) 40% 88% / calc(var(--webg-spec) * 0.14)), transparent 66%);
     --webg-pointer-gloss: none;
-    /* Layer order: dim veil, FOUR specular pools, gloss, sheen, pointer gloss
-       = 8 layers. The sizes/repeats lists must match the stack one entry per layer:
+    /* Layer order: dim veil, FOUR specular pools, gloss, pointer gloss
+       = 7 layers. The sizes/repeats lists must match the stack one entry per layer:
        a short list cycles from the start, so the fourth specular radial would
        pick up a neighbour's size and tile one gradient across the surface as
        bright squares. */
-    --webg-glass-layers: var(--webg-dim-veil), var(--webg-spec-gloss), var(--webg-gloss), var(--webg-sheen), var(--webg-pointer-gloss);
-    --webg-glass-sizes: 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%;
-    --webg-glass-repeats: no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat;
+    --webg-glass-layers: var(--webg-dim-veil), var(--webg-spec-gloss), var(--webg-gloss), var(--webg-pointer-gloss);
+    --webg-glass-sizes: 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%;
+    --webg-glass-repeats: no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat;
     /* The bevel: a lit round column, not a uniform outline. Top specular
        (1px hard + a 3px decay so the edge has a falloff instead of reading
        as a sticker), a bottom return bounce, dark side walls, an inner
@@ -3250,7 +3242,6 @@ const CSS = `
       --webg-spec-gloss: none;
       --webg-gloss: none;
       --webg-pointer-gloss: none;
-      --webg-sheen: none;
       /* !important: the lens-variant token override above carries higher
          specificity than this block's selector can match without it. */
       --dsw-alias-settings-card-fill: var(--dsw-alias-bg-layer-2);
