@@ -331,7 +331,10 @@ function readPersisted() {
       id: typeof o.id === "string" ? o.id : "",
       scrim: clampNum(o.scrim, 0, 1, DEFAULTS.scrim),
       border: clampNum(o.border, 0, 1, DEFAULTS.border),
-      blur: clampNum(o.blur, 0, 40, DEFAULTS.blur),
+      // The slider tops out at the heaviest tier cap (t3 = 14px). Offering
+      // 40px only created a dead zone: 15-40 changed nothing but the modal
+      // mask blur, so the control promised melt it never delivered.
+      blur: clampNum(o.blur, 0, 14, DEFAULTS.blur),
       wallpaperBlur: clampNum(o.wallpaperBlur, 0, 60, DEFAULTS.wallpaperBlur),
       rotationEnabled: o.rotationEnabled === true,
       rotationGroupId: typeof o.rotationGroupId === "string" ? o.rotationGroupId : "",
@@ -702,6 +705,23 @@ function applySelection(id) {
   if (selection.adjusting) exitAdjust();
   const prevId = selection.id;
   selection.id = id || "";
+  if (selection.id !== prevId) {
+    if (demotedToPreview.has(selection.id)) {
+      // Deliberately re-selecting a demoted wallpaper is a retry: drop the
+      // one-way demotion AND its failure count, or the very next hiccup
+      // would climb a stale ladder and clear the wallpaper outright.
+      demotedToPreview.delete(selection.id);
+      mediaFailures.delete(selection.id);
+    }
+    // Brightness evidence belongs to the wallpaper that is showing. Any
+    // switch — video to video, video to web, web to web — drops the previous
+    // sample at once; the new media's first frame (or its preview probe)
+    // refills it. Re-applying the SAME id (token refresh, demotion) keeps the
+    // sample, so a retry does not flash the neutral veil.
+    sampledLuminance = null;
+    sampledColor = null;
+    sampledVariety = 0;
+  }
   persistSelection();
   const w = selection.id
     ? selection.inventory.wallpapers.find((x) => x.id === selection.id)
@@ -709,10 +729,6 @@ function applySelection(id) {
   if (isPlayable(w) && !demotedToPreview.has(selection.id)) {
     selection.url = w.media;
     selection.type = w.type; // "video" | "web"
-    // Brightness evidence belongs to the showing wallpaper: leaving a web
-    // wallpaper must drop its preview-based estimate instead of letting it
-    // mis-veil the next media until its own first frame arrives.
-    if (selection.type !== "web") { sampledLuminance = null; sampledColor = null; }
   } else if (isPlayable(w) && w.preview) {
     // Playable wallpaper demoted after repeated media failures (an
     // undecodable container) — its preview still is the graceful fallback.
@@ -801,6 +817,7 @@ function buildMedia(sel) {
   }
   attachStillSampling(media, snap);
   attachMediaError(media, snap);
+  attachMediaHealth(media, snap);
   return media;
 }
 
@@ -812,6 +829,10 @@ function attachStillSampling(media, sel) {
   if (type !== "video" && type !== "image") return;
   media.addEventListener(type === "video" ? "loadeddata" : "load", () => {
     sampleWallpaperLuminance();
+    // The same event proves the bytes decode, so it also clears the failure
+    // ladder (see clearMediaFailures). One event, one listener: the verify
+    // harness's mock keeps a single handler per event type.
+    clearMediaFailures(sel);
     applyEffects();
   });
 }
@@ -853,6 +874,28 @@ function attachMediaError(media, sel) {
   if (sel.type === "video") attachZeroFrameDetector(media, sel);
 }
 
+// The ladder must be able to come back down. Without this, two transient
+// errors minutes apart — a token hiccup, a slow disk, a paused decoder —
+// permanently demoted a perfectly good wallpaper for the rest of the session,
+// because only a manual inventory refresh ever cleared the count. A frame
+// that actually arrives proves the bytes are usable, so the count resets.
+// The still preview of an already-demoted wallpaper is NOT media health: it
+// must not clear the ladder that demoted it (it would retry forever).
+function clearMediaFailures(sel) {
+  if (!sel || sel.id !== selection.id) return;
+  if (demotedToPreview.has(sel.id)) return;
+  mediaFailures.delete(sel.id);
+  lastRecoveryAt.delete(sel.id);
+}
+
+function attachMediaHealth(media, sel) {
+  // Video/image elements prove health through their sampling event
+  // (attachStillSampling), so only the web iframe needs its own listener —
+  // both would otherwise race for the same `load` slot in minimal harnesses.
+  if (!sel || sel.type !== "web") return;
+  media.addEventListener("load", () => clearMediaFailures(sel));
+}
+
 // Zero-decoded-frames detector: Chromium can report a video as PLAYING
 // without ever decoding a frame - no error event, currentTime advancing,
 // picture permanently black. Typical with HEVC/H.265 content when the
@@ -878,6 +921,7 @@ function attachZeroFrameDetector(media, sel) {
           ? media.webkitDecodedFrameCount : null);
       if (frames === null) return; // no probe available -> cannot detect
       if (frames === 0) handleMediaFailure(sel);
+      else clearMediaFailures(sel); // decoded frames prove the container works
     }, 2000);
   });
 }
@@ -1244,8 +1288,8 @@ let glassWakeTimer = 0;
 let sampleCanvas = null;
 // Snapshot of every input applyEffects reads, from its last full write. The
 // store emits once per second for the FPS readout — without this guard every
-// tick would rewrite all CSS variables AND force a synchronous layout for
-// nothing. clearEffects() resets it so the next apply always writes.
+// tick would rewrite all CSS variables and invalidate style for nothing.
+// clearEffects() resets it so the next apply always writes.
 let lastEffectKey = null;
 /** Average Rec.601 luminance and average RGB (all 0..255 scale) of a
  * drawable media frame, or null. The luminance drives the veil floor and
@@ -1332,6 +1376,10 @@ function sampleWallpaperLuminance() {
   if (stats !== null) {
     sampledLuminance = stats.lum;
     sampledColor = { r: stats.r, g: stats.g, b: stats.b };
+    // Videos used to write only lum/colour: sampledVariety stayed 0, so the
+    // "busy wallpaper needs a thicker body" term was dead for every video and
+    // only ever fired for web wallpapers' preview probes.
+    sampledVariety = stats.std || 0;
   }
 }
 
@@ -1434,7 +1482,11 @@ const LENS_SURFACES = [
   { sel: "[data-composer-card]", band: 16, tier: "t2" },
   { sel: "[data-menu-material]", band: 12, tier: "t2", menuToken: true },
   { sel: '[data-composer-dock] [class*="_panel"]', band: 12, tier: "t2" },
-  { sel: '[class*="_dialog_"]', band: 18, tier: "t3" },
+  // A dialog that wraps an overlay panel must not build a map either: the
+  // panel's ::before carries the melt, and an inherited --webg-lens-chain on
+  // the dialog would hand that pseudo a dialog-sized map whenever the panel's
+  // own slot is between paints (or bails on size).
+  { sel: '[class*="_dialog_"]:not(:has([class$="_overlay"] > [class$="_panel"]))', band: 18, tier: "t3" },
   { sel: '[class$="_overlay"] > [class$="_panel"]', band: 18, tier: "t3", pseudo: true },
   { sel: ".webg-adjust-bar", band: 8, tier: "t1" },
 ];
@@ -1472,7 +1524,8 @@ function rasterizeLens(w, h, rad, band) {
   const sx = cw / (w + pad * 2), sy = ch / (h + pad * 2);
   const r = Math.max(0, Math.min(rad, Math.min(w, h) / 2 - 1));
   const sdf = (x, y) => {
-    // Squircle-tinted rounded rect in CSS px (the map is sampled in CSS px).
+    // Rounded-rect SDF in CSS px (the map is sampled in CSS px). The normal
+    // comes from this field, so the corner radius is the only shape knob.
     const qx = Math.abs(x - w / 2) - (w / 2 - r);
     const qy = Math.abs(y - h / 2) - (h / 2 - r);
     const ax = Math.max(qx, 0), ay = Math.max(qy, 0);
@@ -1618,14 +1671,28 @@ function paintLensSlot(el) {
   const url = surfaceLensMap(w, h, Math.max(0, Math.min(radius, Math.min(w, h) / 2 - 1)), band);
   if (!url) { clearLensChain(el); return; }
   const pad = lensPad(band);
+  // Filter region: the backdrop capture must reach as far outside the border
+  // box as the displacement can pull a sample from. Peak displacement is
+  // scale / 2 = band * 2 CSS px; add the post-blur tail. The old fixed
+  // -8% / 116% region was smaller than that on narrow surfaces (band 18 needs
+  // 40px, a 320px menu only had 25.6px), which clipped the refracted rim.
+  // Percentages are relative to the border box (objectBoundingBox units).
+  const reach = band * 2 + 4;
+  const regionX = (reach / w) * 100;
+  const regionY = (reach / h) * 100;
+  slot.filter.setAttribute("x", "-" + regionX.toFixed(2) + "%");
+  slot.filter.setAttribute("y", "-" + regionY.toFixed(2) + "%");
+  slot.filter.setAttribute("width", (100 + regionX * 2).toFixed(2) + "%");
+  slot.filter.setAttribute("height", (100 + regionY * 2).toFixed(2) + "%");
   slot.image.setAttribute("href", url);
   slot.image.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", url);
   slot.image.setAttribute("x", String(-pad));
   slot.image.setAttribute("y", String(-pad));
   slot.image.setAttribute("width", String(w + pad * 2));
   slot.image.setAttribute("height", String(h + pad * 2));
-  // Peak rim displacement = band * 1.15 CSS px. The map encodes unit
-  // direction x decay (magnitude <= 1), so scale = 2 * peak.
+  // feDisplacementMap shifts by scale * (channel/255 - 0.5), so a channel
+  // span of ±127 gives ±scale/2: scale = 4 * band means a 2 * band CSS px
+  // peak at the rim, on the far side of Apple's measured ~1.8x band.
   slot.disp.setAttribute("scale", String(Math.round(band * 4)));
   // The filter blur runs after the displacement; as the quadrature pair of
   // the CSS head blur it lands the surface exactly on its tier blur.
@@ -1639,8 +1706,12 @@ function paintLensSlot(el) {
     // the var must be set on the host and inherited by the pseudo.
     el.style.setProperty("--webg-lens-chain", filterUrl + " " + chain);
   } else if (slot.spec.menuToken) {
-    // Host menus consume --dsw-menu-backdrop-filter on the menu element
-    // itself; an inline value wins over the body-level repoint.
+    // Two consumers, two variables. This stylesheet's menu rule consumes
+    // --webg-lens-chain (the same per-surface variable every other slot
+    // writes); the host's menu child layers consume the --dsw- token. The
+    // old branch wrote ONLY the host token, so the rule that actually paints
+    // the menu fell back to the plain tier chain and the map was never used.
+    el.style.setProperty("--webg-lens-chain", filterUrl + " " + chain);
     el.style.setProperty("--dsw-menu-backdrop-filter", filterUrl + " " + chain);
   } else {
     el.style.setProperty("--webg-lens-chain", filterUrl + " " + chain);
@@ -1695,9 +1766,41 @@ function scheduleLensScan() {
   }, 90);
 }
 
+// A DOM mutation only matters to the lens layer when it can add, remove or
+// re-class a LENS_SURFACES element. Chat streaming mutates classes and text
+// nodes constantly; without this filter every such batch scheduled a 90ms scan
+// that re-ran six querySelectorAll sweeps and read layout of every slot.
+function lensMutationRelevant(records) {
+  for (let i = 0; i < records.length; i++) {
+    const rec = records[i];
+    if (rec.type === "attributes") {
+      const el = rec.target;
+      if (!el || el.nodeType !== 1) continue;
+      if (el.matches && el.matches(LENS_SELECTOR)) return true;
+      // A slot host whose class just changed may have stopped matching.
+      if (el.__webgLens) return true;
+      continue;
+    }
+    const lists = [rec.addedNodes, rec.removedNodes];
+    for (let k = 0; k < lists.length; k++) {
+      const nodes = lists[k];
+      for (let j = 0; j < nodes.length; j++) {
+        const n = nodes[j];
+        if (!n || n.nodeType !== 1) continue; // text nodes are the streaming churn
+        if (n.matches && n.matches(LENS_SELECTOR)) return true;
+        if (n.querySelector && n.querySelector(LENS_SELECTOR)) return true;
+      }
+    }
+  }
+  return false;
+}
+
 function attachLensWatcher() {
   if (lensMutator || typeof MutationObserver !== "function" || !document.body) return;
-  lensMutator = new MutationObserver(() => scheduleLensScan());
+  lensMutator = new MutationObserver((records) => {
+    if (!document.body.hasAttribute(LENS_ATTR)) return;
+    if (lensMutationRelevant(records)) scheduleLensScan();
+  });
   lensMutator.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "data-composer-card", "data-menu-material"] });
 }
 
@@ -1786,6 +1889,10 @@ function syncPointerLight() {
 }
 
 function applyEffects() {
+  // A frame can outlive teardown (a slider burst, a scheduled repaint). Once
+  // disposed, every write here would resurrect the dark attr and the vars the
+  // cleanup just removed.
+  if (disposed) return;
   // The veil darkens bright wallpapers (the dark material serves light text —
   // this is what makes ANY wallpaper survivable).
   // Material permanently dark (user decision, 2026-11-06): one glass recipe
@@ -1859,13 +1966,11 @@ function applyEffects() {
   const veilColor = "rgba(0,0,0," + alpha + ")";
   s.setProperty("--webg-scrim-color", veilColor);
   s.setProperty("--webg-border-alpha", String(selection.border));
-  s.setProperty("--webg-blur", selection.blur + "px");
-  // Vibrancy rides a CONSTANT saturate(1.5) — the host menu material's own
-  // recipe — at every slider position. The blur slider then only steers how
-  // milk-glass vs. liquid the melt reads (the liquid zone is ~8-12px; past
-  // ~16px it reads frosted), never how saturated. The 40px ceiling keeps
-  // reproducing the host recipe blur(40px) saturate(150%) exactly, so full
-  // glass and the host's frosted chrome read as one system.
+  // The chain recipe lives in tierChain(): saturation and contrast are fixed
+  // per tier (1.6 / 1.4+0.92 / 1.3+0.9), so the slider only steers how much
+  // melt a surface gets — never how saturated it reads. All three tiers cap
+  // at 14px (tierBlur); the host's 40px frosted recipe is intentionally not
+  // reproduced verbatim, because past ~16px the glass reads frost, not liquid.
   // Adaptive luminosity — Apple's material self-adjusts to the content
   // behind it: a bright wallpaper dims the melt a touch, a dark one lifts
   // it a whisper (a full lift turned near-black backdrops into grey smoke —
@@ -1895,7 +2000,6 @@ function applyEffects() {
   s.setProperty("--webg-rim", Math.min(1.15, mat.rim + (glassWake ? 0.22 : 0)).toFixed(3));
   s.setProperty("--webg-spec", mat.spec.toFixed(3));
   s.setProperty("--webg-shadow-k", mat.shadowK.toFixed(3));
-  s.setProperty("--webg-busy", mat.busy.toFixed(2));
   // Three tiers, one chain each: light glass (bars, buttons), regular (menus,
   // composer, dock), thick (dialogs, full-page overlays).
   const chainT1 = tierChain("t1", selection.blur, glassBright);
@@ -1973,8 +2077,9 @@ function applyEffects() {
   s.setProperty("--webg-rotate", selection.rotation + "deg");
   s.setProperty("--webg-mirror", selection.mirrored ? "-1" : "1");
 
-  // Write the scrim colour directly too, then force a synchronous layout, so
-  // slider feedback lands on this frame even on stalled compositors.
+  // Write the scrim colour directly too: the scrim is its own layer, and
+  // setting the element style alongside the body variable keeps the veil and
+  // the glass in one frame (no forced layout is involved or needed).
   const scrim = document.getElementById(SCRIM_ID);
   if (scrim) scrim.style.background = veilColor;
   // Surfaces that appeared since the last pass (a menu opened, a dialog
@@ -1995,7 +2100,6 @@ function clearEffects() {
   const s = document.body.style;
   s.removeProperty("--webg-scrim-color");
   s.removeProperty("--webg-border-alpha");
-  s.removeProperty("--webg-blur");
   s.removeProperty("--dsw-mask-blur"); // restore the host's own mask token
   s.removeProperty("--webg-glass-brightness");
   s.removeProperty("--webg-backdrop");
@@ -2008,7 +2112,6 @@ function clearEffects() {
   s.removeProperty("--webg-rim");
   s.removeProperty("--webg-spec");
   s.removeProperty("--webg-shadow-k");
-  s.removeProperty("--webg-busy");
   s.removeProperty("--webg-chain-t1");
   s.removeProperty("--webg-chain-t2");
   s.removeProperty("--webg-chain-t3");
@@ -2050,6 +2153,7 @@ function SliderRow(label, min, max, step, value, onInput, suffix) {
     React.createElement("span", { className: "webg-hint webg-label" }, label),
     React.createElement("input", {
       className: "webg-slider", type: "range",
+      "aria-label": label,
       min: String(min), max: String(max), step: String(step),
       value: String(value),
       style: { "--webg-p": String(pct) },
@@ -2229,10 +2333,32 @@ function onToggleLens() {
   emit();
 }
 
-function onScrim(pct) { selection.scrim = pct / 100; persistSelection(); applyEffects(); emit(); }
-function onBorder(pct) { selection.border = pct / 100; persistSelection(); applyEffects(); emit(); }
-function onBlur(px) { selection.blur = px; persistSelection(); applyEffects(); emit(); }
-function onWallpaperBlur(px) { selection.wallpaperBlur = px; persistSelection(); applyEffects(); emit(); }
+// Range inputs emit one input event per pointer move (~120 Hz). Running the
+// full write path per event — a synchronous localStorage JSON write, ~30 body
+// custom-property writes, then a whole-picker React render — meant three sync
+// passes per move. Mutate the store immediately (applyEffects reads it), and
+// collapse the expensive half to one frame: the last value wins.
+let sliderFrame = 0;
+let sliderDirty = false;
+function flushSliderFrame() {
+  sliderFrame = 0;
+  if (!sliderDirty) return;
+  sliderDirty = false;
+  if (disposed) return; // teardown won the race; do not resurrect body vars
+  persistSelection();
+  applyEffects();
+  emit();
+}
+function scheduleSliderFrame() {
+  sliderDirty = true;
+  if (typeof requestAnimationFrame !== "function") { flushSliderFrame(); return; }
+  if (sliderFrame) return;
+  sliderFrame = requestAnimationFrame(flushSliderFrame);
+}
+function onScrim(pct) { selection.scrim = pct / 100; scheduleSliderFrame(); }
+function onBorder(pct) { selection.border = pct / 100; scheduleSliderFrame(); }
+function onBlur(px) { selection.blur = px; scheduleSliderFrame(); }
+function onWallpaperBlur(px) { selection.wallpaperBlur = px; scheduleSliderFrame(); }
 
 function onFit(e) {
   selection.fit = FIT_MODES.indexOf(e.target.value) >= 0 ? e.target.value : "cover";
@@ -2519,7 +2645,7 @@ function EffectsPanel(t, sel) {
         Math.round(sel.scrim * 100) + "%"),
       SliderRow(t.border, 0, 90, 5, Math.min(90, Math.round(sel.border * 100)), onBorder,
         Math.round(sel.border * 100) + "%"),
-      SliderRow(t.glass, 0, 40, 1, sel.blur, onBlur, sel.blur + "px"),
+      SliderRow(t.glass, 0, 14, 1, sel.blur, onBlur, sel.blur + "px"),
     ),
   );
 }
@@ -3000,8 +3126,6 @@ const CSS = `
      now carry the full material too — the earlier "menus keep the
      shell's chrome" caution predates the material system, and flat grey
      read as a dead panel, not glass. */
-     earlier "menus keep the shell's chrome" caution predates the
-     material system, and flat grey read as a dead panel, not glass. */
   body[${ACTIVE_ATTR}] { --dsw-menu-surface-fill: var(--webg-body); }
   body[${ACTIVE_ATTR}] [data-menu-material],
   body[${ACTIVE_ATTR}] [data-composer-dock] [class*="_panel"] {
@@ -3083,9 +3207,17 @@ const CSS = `
     background-image: var(--webg-glass-layers);
     background-size: var(--webg-glass-sizes);
     background-repeat: var(--webg-glass-repeats);
+    box-shadow: var(--webg-deep-shadow, 0 12px 40px rgba(0, 0, 0, 0.14));
+  }
+  /* The filter is the part that makes its host the containing block for fixed
+     and absolutely positioned descendants. A dialog that WRAPS an overlay
+     panel must not get it: the panel's ::before already carries the melt, and
+     third-party settings sections inside that panel anchor fixed layers to the
+     viewport (the "bili 设置" blanking documented below). Dialogs with no
+     overlay panel inside keep the filter on the element itself. */
+  body[${ACTIVE_ATTR}] [class*="_dialog_"]:not(:has([class$="_overlay"] > [class$="_panel"])) {
     -webkit-backdrop-filter: var(--webg-lens-chain, var(--webg-chain-t3, var(--webg-backdrop, blur(12px) saturate(1.5) brightness(1.04) contrast(1.01))));
     backdrop-filter: var(--webg-lens-chain, var(--webg-chain-t3, var(--webg-backdrop, blur(12px) saturate(1.5) brightness(1.04) contrast(1.01))));
-    box-shadow: var(--webg-deep-shadow, 0 12px 40px rgba(0, 0, 0, 0.14));
   }
 
   /* Overlay window panels (the settings window, the lightbox) carry the
@@ -3825,12 +3957,31 @@ function apply(ctx) {
   }
 
   // 4b. Drive the nav icon swap (defined above): the settings dialog mounts
-  //     its nav only while open, so the observer just sweeps on mutation
-  //     batches and early-exits when no nav rows exist. Disposed with the
-  //     plugin fiber.
+  //     its nav only while open. Chat streaming mutates the body subtree
+  //     continuously, so sweep only when a mutation can have touched a nav
+  //     cell — a sweep per batch was hundreds of querySelectorAll calls a
+  //     second for a gear that only exists inside the settings nav.
+  //     Disposed with the plugin fiber.
+  const navTouched = (records) => {
+    for (const rec of records) {
+      const nodes = [rec.target];
+      if (rec.addedNodes) for (const n of rec.addedNodes) nodes.push(n);
+      if (rec.removedNodes) for (const n of rec.removedNodes) nodes.push(n);
+      for (const n of nodes) {
+        if (!n) continue;
+        const el = n.nodeType === 1 ? n : n.parentElement;
+        if (!el) continue;
+        if (el.closest && el.closest('button[class*="navCell"]')) return true;
+        if (el.querySelector && el.querySelector('button[class*="navCell"]')) return true;
+      }
+    }
+    return false;
+  };
   if (ctx.effect && typeof MutationObserver === "function" && typeof document !== "undefined") {
     ctx.effect(() => {
-      const mo = new MutationObserver(styleNavIcon);
+      const mo = new MutationObserver((records) => {
+        if (navTouched(records)) styleNavIcon();
+      });
       mo.observe(document.body, { childList: true, subtree: true });
       styleNavIcon();
       return () => mo.disconnect();

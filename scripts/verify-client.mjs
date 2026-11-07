@@ -478,7 +478,12 @@ setTimeout(async () => {
   // dark theme (light text) veils BLACK — readable over any wallpaper.
   check('scrim veil is black (material dark-pinned)', props['--webg-scrim-color'] === 'rgba(0,0,0,0.18)',
     props['--webg-scrim-color']);
-  check('glass blur css var default', props['--webg-blur'] === '5px', props['--webg-blur']);
+  // --webg-blur / --webg-busy were written but never read by the stylesheet;
+  // they are retired so a dead token cannot silently drift into meaning
+  // something later. The tier chains below are the single source of truth.
+  check('retired dead tokens are not written',
+    props['--webg-blur'] === undefined && props['--webg-busy'] === undefined,
+    props['--webg-blur'] + ' / ' + props['--webg-busy']);
   check('media filter is none at zero blur (bit-exact pixels)', props['--webg-media-filter'] === 'none',
     props['--webg-media-filter']);
   check('noise overlay hidden at zero blur', props['--webg-noise-display'] === 'none',
@@ -969,6 +974,14 @@ setTimeout(async () => {
       windowMock.matchMedia = () => ({ matches: false });
       glassSlider.props.onChange({ target: { value: '16', style: { setProperty() {} } } });
       check('lens gate returns after RT lifts', bodyEl.attributes['data-webg-lens'] === '');
+      // The menu branch must feed BOTH consumers: --webg-lens-chain (the rule
+      // this stylesheet uses to paint the menu) and the host's
+      // --dsw-menu-backdrop-filter. Writing only the host token left the local
+      // rule on the plain tier chain and the built map unused.
+      check('menu slots write the per-surface chain, not only the host token',
+        /else if \(slot\.spec\.menuToken\)[\s\S]{0,700}--webg-lens-chain/.test(code) &&
+          /else if \(slot\.spec\.menuToken\)[\s\S]{0,700}--dsw-menu-backdrop-filter/.test(code),
+        'menuToken branch');
     }
 
     // Smart veil math: fire the media's loadeddata so the sampler runs over
