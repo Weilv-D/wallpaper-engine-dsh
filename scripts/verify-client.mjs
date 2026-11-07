@@ -1109,7 +1109,8 @@ setTimeout(async () => {
       // Zero-decoded-frames path: the element claims to play (no error
       // event) but decodes nothing - the HEVC-black-screen case. Manual
       // refresh above reset the failure ladder, so this runs it again
-      // from the top: hit 1 recovers (fresh remount), hit 2 demotes.
+      // from the top: hit 1 recovers (fresh remount), hit 2 marks the
+      // entry undecodable and hides it.
       {
         const zf = documentMock.getElementById('wallpaper-engine-dsh-layer').children[0];
         check('zero-frame probe listener attached to playing',
@@ -1136,10 +1137,32 @@ setTimeout(async () => {
           const probe2 = timers.find((t) => !t.cleared && t.ms === 2000 && !t.fired);
           check('zero-frame probe 2 scheduled on the remounted element', Boolean(probe2));
           if (probe2) probe2.fn();
-          const demoted = documentMock.getElementById('wallpaper-engine-dsh-layer').children[0];
-          check('zero-decoded-frames playing demotes to the preview still',
-            demoted && demoted.tagName === 'IMG' && /\/preview\//.test(String(demoted.src || '')),
-            demoted && demoted.tagName + ' ' + (demoted.src || ''));
+          // The hit-1 recovery is still refreshing the inventory here, so the
+          // toolbar renders its "refreshing" label; match the prefix and click
+          // through it (the handler is the same onRefresh).
+          const clearedLayer = documentMock.getElementById('wallpaper-engine-dsh-layer');
+          const cleared = clearedLayer && clearedLayer.children[0];
+          check('zero-decoded-frames playing hides the entry instead of demoting',
+            !cleared, cleared && cleared.tagName);
+          const gridAfterHide = pickerRenders[0]();
+          check('undecodable wallpaper leaves the grid',
+            !cardByTitle(collectButtons(gridAfterHide), 'Video A'));
+          const refreshAfterHide = collectButtons(gridAfterHide).find((b) => {
+            const text = Array.isArray(b.children) ? b.children.join('') : String(b.children || '');
+            return text.startsWith('刷新');
+          });
+          check('refresh still present after hiding an entry', Boolean(refreshAfterHide));
+          if (refreshAfterHide) {
+            refreshAfterHide.props.onClick();
+            await new Promise((r) => setTimeout(r, 20));
+            const restored = cardByTitle(collectButtons(pickerRenders[0]()), 'Video A');
+            check('refresh clears the undecodable set and restores the card', Boolean(restored));
+            // Re-select so the following clear/fade checks still have a layer.
+            if (restored) {
+              restored.props.onClick();
+              drainShortTimers();
+            }
+          }
         }
       }
         }

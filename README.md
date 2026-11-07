@@ -28,7 +28,7 @@ A DSH bundle that turns the local **Wallpaper Engine** library into a living bac
 
 ### Refraction
 
-- Each pane rasterises its displacement map at its own pixel size and radius; `feDisplacementMap` sits at the end of the filter chain — blur first, then refract.
+- Each pane rasterises its displacement map at its own pixel size and radius; `feDisplacementMap` sits at the head of the filter chain — refract first, then blur.
 - Displacement peaks at the rim and decays inward to zero. The edges compress the scene inward; this is where the liquid read comes from.
 - A ResizeObserver rebuilds the map when a pane changes size.
 - The Surface refraction setting turns the whole lens layer off — plain backdrop blur remains.
@@ -46,6 +46,7 @@ A DSH bundle that turns the local **Wallpaper Engine** library into a living bac
 - Menus, dialogs, overlay panels and the dock take their own tier; submenus (`role="menu"`) take T2.
 - Tooltips take the body tint and the bevel, with no backdrop capture.
 - The shell's other floating panels consume the `--dsw-menu-backdrop-filter` token, re-pointed at the same filter chains; ds-harness-remote's `dshRemotePage` gets the dialog treatment; dsh-better-sidebar's bottom panel is T2 light glass.
+- Full-page settings headers (the plugin page's sticky bar) stay transparent: a clipped copy of the live wallpaper — a "window" — is parked inside the bar, above the scrolled rows and below the title/tabs, so content no longer shows through while the wallpaper still does.
 
 ### Manual framing
 
@@ -83,9 +84,10 @@ The UI follows the DSH 语言 (language) setting (中文 / English), or a manual
 ### Playback-failure recovery
 
 - Switching and closing both crossfade.
-- On repeated decode failures: retry once with fresh tokens; then fall back to the preview image with a status-line note; items without a preview clear the selection instead of showing a black screen.
-- Re-selecting a demoted wallpaper is a retry: demotion and the failure count clear together.
-- 刷新 rescans the library and retries the original media; the playing element swaps its address in place and keeps its progress. Inventory rebuilds in the background reuse the same URLs and never interrupt playback.
+- On a media failure: retry once with fresh tokens — a stale token and an unsupported file are indistinguishable on the first error.
+- A second failure that is decode-shaped (decode error, unsupported source, or a video that "plays" but decodes no frames) marks the entry undecodable: it leaves the grid and the rotation lists, and if it was showing, the next rotation candidate takes over (or the layer clears).
+- Other repeated failures fall back to the preview image with a status-line note; items without a preview clear the selection instead of showing a black screen.
+- 刷新 clears the undecodable and demotion marks, rescans the library and retries the original media; the playing element swaps its address in place and keeps its progress. Inventory rebuilds in the background reuse the same URLs and never interrupt playback.
 
 ## Install
 
@@ -148,7 +150,7 @@ Media service hardening:
 - Scene and application wallpapers are not listed: they are Wallpaper Engine's private `.pkg` packages, which a browser cannot execute.
 - Web wallpapers are storage-isolated; wallpapers that save state across loads cannot keep it.
 - Web wallpapers with sound stay silent until you interact with the page (sandboxed audio autoplay rules); wallpapers depending on Wallpaper Engine's system audio input have no signal to draw.
-- Video codecs follow the browser's decoder support: H.264, VP8, VP9 and AV1 play directly; H.265/HEVC cannot software-decode on most machines. When a video claims to play but decodes no frames, it demotes to the preview image with a status-line note. Transcode to an H.264 mp4 or a VP9 webm for full playback.
+- Video codecs follow the browser's decoder support: H.264, VP8, VP9 and AV1 play directly; H.265/HEVC cannot software-decode on most machines. When a video claims to play but decodes no frames, it is marked undecodable and leaves the grid (刷新 retries it). Transcode to an H.264 mp4 or a VP9 webm for full playback.
 - The glass reads DSH design tokens; if a shell refactor renames them, the glass degrades to a plain translucent fill.
 - Surface refraction renders in Chromium-family engines only: Safari and Firefox parse `backdrop-filter: url()` and then drop the whole chain, so the plugin gates it by UA and falls back to plain blur. The Electron desktop is unaffected.
 
@@ -166,6 +168,7 @@ npm run verify     # boots the bundle in a vm sandbox and asserts behaviour
 - `src/client.js`: browser source; the build artifact is `lib/client.js`, do not hand-edit it.
 - `npm run prepublishOnly` runs the full gate: test → build → verify.
 - The liquid-glass research brief (layer model, refraction profile, Chromium constraints, evidence-graded) lives in `liquid-glass-report.zh.md`.
+- Reading conventions (what to read first, invariants, common misreads) live in `READING.zh.md`; architecture, runtime and handover notes live in `HANDOVER.zh.md`.
 
 ## Releases
 
