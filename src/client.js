@@ -1546,6 +1546,13 @@ function syncHeaderWindow() {
     const media = buildHeaderWindowMedia(source);
     frame.appendChild(media);
     host.appendChild(frame);
+    // The scrim sits between the wallpaper and the page; the window is above
+    // it, so it needs the same veil (and the layer's noise, on the frame) to
+    // land on the exact colour the wallpaper has around the bar.
+    const veil = document.createElement("div");
+    veil.className = "webg-header-veil";
+    veil.setAttribute("aria-hidden", "true");
+    host.appendChild(veil);
     // Appended last, not inserted first: React owns the bar's children, and a
     // foreign node at index 0 is the position its insertions are most likely
     // to trip over. Painted order does not depend on DOM order — z-index −1
@@ -3624,7 +3631,9 @@ const CSS = `
      gets a WINDOW onto the wallpaper: syncHeaderWindow() parks a clipped copy
      of the live media inside the bar, above the scrolled rows and below the
      bar's own text (z-index −1 inside the bar's stacking context). From the
-     outside the bar stays transparent; to the rows it is opaque. The host's
+     outside the bar stays transparent; to the rows it is opaque. The copy
+     repeats the live layer's canvas colour, dither noise and scrim veil, so
+     the strip is the wallpaper itself, not a lighter echo of it. The host's
      ::after hairline still draws over it. */
   .webg-header-window {
     position: absolute;
@@ -3634,7 +3643,32 @@ const CSS = `
     z-index: -1;
     pointer-events: none;
   }
-  .webg-header-frame { position: absolute; overflow: hidden; }
+  .webg-header-frame {
+    position: absolute;
+    overflow: hidden;
+    /* The window must reproduce the whole wallpaper stack, not just the media:
+       the layer's canvas colour (black in free fit), its dither noise, and the
+       scrim veil that sits between the wallpaper and the page. Without the
+       veil the strip reads brighter than the wallpaper around it. */
+    background: var(--webg-layer-bg, transparent);
+    isolation: isolate;
+  }
+  /* Same dither as .webg-layer::after — a blurred clone would otherwise band. */
+  .webg-header-frame::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    display: var(--webg-noise-display, none);
+    opacity: var(--webg-noise-opacity, 0);
+    background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch"/></filter><rect width="120" height="120" filter="url(%23n)"/></svg>');
+    background-size: 120px 120px;
+    mix-blend-mode: overlay;
+  }
+  /* The page sees the wallpaper through .webg-scrim; the window sits above
+     that scrim, so it carries the same veil to land on the same colour. */
+  .webg-header-veil {
+    position: absolute; inset: 0; pointer-events: none;
+    background: var(--webg-scrim-color, rgba(0, 0, 0, 0.25));
+    transition: background 300ms ease;
+  }
   /* Motion: everything here is gated by prefers-reduced-motion. The wake
      (see triggerGlassWake) swells the registered --webg-rim once per
      wallpaper switch; webg-bar-in springs the crop bar in; the registered
