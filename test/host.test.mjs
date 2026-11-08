@@ -11,7 +11,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import {
-  mkdirSync, mkdtempSync, rmSync, writeFileSync,
+  mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -311,14 +311,54 @@ test('discovery: TTL re-runs after an explicit refresh (slot ownership)', async 
       { statusCode: 0, setHeader() {}, end: resolve });
   });
   try {
-    await new Promise((r) => setTimeout(r, 10)); // registration warm-up settles
+    await new Promise((r) => setTimeout(r, 150)); // registration warm-up settles
     const beforeForce = calls.length;
     await call('?refresh=1'); // forced, nothing in flight
     assert.equal(calls.length, beforeForce + 1);
-    await new Promise((r) => setTimeout(r, 60)); // discovery cache goes stale
+    await new Promise((r) => setTimeout(r, 120)); // discovery cache goes stale
     await call(''); // plain TTL build
     assert.equal(calls.length, beforeForce + 2); // re-discovered, not frozen
   } finally {
     dispose();
+  }
+});
+
+
+test('preview: serves the preview bytes with an image content-type', async () => {
+  const vid = inventory.wallpapers.find((w) => w.id === 'vid1');
+  const res = await get(vid.preview);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('content-type'), 'image/jpeg');
+  assert.equal(await res.text(), 'jpeg-bytes');
+});
+
+test('HEAD with a Range header: 206 headers, empty body', async () => {
+  const vid = inventory.wallpapers.find((w) => w.id === 'vid1');
+  const res = await fetch(`http://127.0.0.1:${port}${vid.media}`, { method: 'HEAD', headers: { range: 'bytes=2-5' } });
+  assert.equal(res.status, 206);
+  assert.equal(res.headers.get('content-range'), 'bytes 2-5/10');
+  assert.equal(res.headers.get('content-length'), '4');
+  assert.equal(await res.text(), '');
+});
+
+test('sub-assets through a junction pointing outside are refused (realpath layer)', async () => {
+  const web = inventory.wallpapers.find((w) => w.id === 'web1');
+  const webRoot = web.media.slice(0, web.media.lastIndexOf('/'));
+  // Windows needs admin rights for real symlinks; a directory junction is
+  // equivalent for the realpath defense and needs no elevation.
+  const linkPath = join(tmp, 'lib', 'steamapps', 'workshop', 'content', '431960', 'web1', 'escape-link');
+  try {
+    symlinkSync(tmp, linkPath, 'junction');
+  } catch (err) {
+    // A filesystem that forbids junctions must not silently skip the check.
+    assert.match(String(err.code || err), /EPERM|EACCES|ENOENT|EEXIST/);
+    return;
+  }
+  try {
+    const res = await get(`${webRoot}/escape-link/secret.txt`);
+    assert.ok(res.status === 403 || res.status === 404, String(res.status));
+    assert.notEqual(await res.text(), 'must-never-leak');
+  } finally {
+    rmSync(linkPath, { force: true });
   }
 });

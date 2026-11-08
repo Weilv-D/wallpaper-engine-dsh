@@ -13,6 +13,7 @@ import assert from 'node:assert/strict';
 import {
   mkdirSync, mkdtempSync, rmSync, writeFileSync,
 } from 'node:fs';
+import { stat as statFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -59,7 +60,7 @@ test('parseKeyValues: nesting, escapes, comments, duplicates; garbage degrades',
   // input degrades to a partial tree instead of throwing.
   assert.equal(core.parseKeyValues('"a" { "k" "1" "k" "2" }').a.k, '2');
   assert.deepEqual(core.parseKeyValues(''), {});
-  assert.equal(typeof core.parseKeyValues('"unterminated { "x" "y"'), 'object');
+  assert.deepEqual(core.parseKeyValues('"unterminated { "x" "y"'), { "unterminated { ": "x", " ": "y" });
 });
 
 test('librariesFromVdfText: EXACT appid ownership; legacy probes; garbage', () => {
@@ -282,6 +283,7 @@ async function fixtureInventory(t) {
       { name: 'Mix', items: [
         join(p1Dir, 'a.mp4'),
         join(p3Dir, 'index.html'),
+        join(p1Dir, 'a.mp4'), // duplicate of the first item: resolved, NOT unresolved
         join(t, 'nowhere', 'ghost.mp4'), // never enumerated → unresolved
       ], settings: { order: 'random' } },
     ] } },
@@ -321,10 +323,11 @@ test('buildInventoryFrom: assembles wallpapers + playlists from a fixture tree',
   assert.equal(mints[1].abs, join(p3Dir, 'index.html'));
   assert.equal(mints[1].rootDir, p3Dir); // web: sub-assets allowed inside dir
 
-  // Playlist resolved two of three items; the ghost item counts unresolved.
+  // Playlist: the duplicate resolves like the original; only the ghost counts.
   assert.equal(inv.playlists.length, 1);
   assert.deepEqual(inv.playlists[0].wallpaperIds, ['p1', 'p3']);
   assert.equal(inv.playlists[0].portableCount, 2);
+  // Per-item counting: a resolved duplicate must not inflate the number.
   assert.equal(inv.playlists[0].unresolvedCount, 1);
 }));
 
@@ -405,4 +408,24 @@ test('buildInventoryFrom: nested/unicode web entries keep their directory shape'
   // space is %20 — the route's decodeURIComponent round-trips it exactly.
   assert.equal(w.media,
     '/we-background/media/tok-web/bin/' + encodeURIComponent('start page.html'));
+}));
+
+
+test('buildInventoryFrom: stat failure yields fingerprint null, entry stays', () => withTemp(async (t) => {
+  const { installDir, lib } = await fixtureInventory(t);
+  const inv = await core.buildInventoryFrom(
+    { installDir, libraryRoots: [lib] },
+    {
+      mint: () => 'tok',
+      statSync: (p) => {
+        if (String(p).endsWith('a.mp4')) throw new Error('stat boom');
+        return statFile(p);
+      },
+    },
+  );
+  const w1 = inv.wallpapers.find((w) => w.id === 'p1');
+  const w2 = inv.wallpapers.find((w) => w.id === 'p3');
+  assert.equal(w1.fingerprint, null);
+  assert.equal(w1.playable, true); // the media route will 404 on demand
+  assert.match(w2.fingerprint, /^\d+:\d+$/);
 }));

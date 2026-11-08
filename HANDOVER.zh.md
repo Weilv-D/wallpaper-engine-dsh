@@ -146,17 +146,17 @@
 
 `handleMediaFailure(sel, decodeFailure)`：
 
-1. 第一次错误：10 s 节流内只重挂一次，并通过 `loadInventory(true)` 换新令牌（令牌过期与文件不支持在第一次错误上无法区分，所以第一次一律先重试）；
+1. 第一次错误：10 s 节流内只重挂一次，并**非强制地**重拉当前清单（`loadInventory(false)`——强制 `refresh=1` 会重签全局令牌，把其他窗口正在播放的 URL 全部杀掉，两个窗口会互相触发恢复形成乒乓）；
 2. 第二次若判定为解码类失败（`MediaError.code` 为 3 解码错误 / 4 源不支持，或零帧检测器发现"在播放但解不出帧"）：把 id → 文件指纹（`size:mtimeMs`，来自清单条目）写入持久化的"无法解码"映射（`wallpaper-engine-dsh:undecodable`，最多 500 条），条目立即从网格与轮转列表消失；若它正在显示，切到下一个轮转候选，没有候选就清空图层；
 3. 其他重复失败：若存在预览图，降级为静态预览（`demotedToPreview`）；没有预览则清空。
 
 "康复"路径：采样成功（视频 `loadeddata`、图片 `load`）或网页 iframe `load` 时 `clearMediaFailures()` 清零计数；零帧检测器在播放 2 s 后仍解码不出任何帧时按解码失败处理，解出帧则清零。降级标记只在"切到另一张壁纸再切回来"（id 变化）或点"刷新"（`onRefresh()` 清空降级与失败计数后重载）时解除；"无法解码"不参与刷新清除——`isUndecodable` 只在当前文件指纹与记录一致时生效，文件被替换或重新编码后自动回到网格；记录为 `*`（宿主当时给不出指纹）的判定只在拿不到指纹时隐藏，清单一旦带上指纹，`releaseUnverifiableVerdicts()` 会在加载时删除它，仍然失败的条目由阶梯写入真实指纹。升级后首次加载会丢弃没有 schema 标记的旧记录（裸 id 数组或 2.3.9 的无标记对象）：这类记录无法证明磁盘上的字节仍是当初失败的那份，文件若已在插件外修好，一次加载即可回归；仍损坏的条目会在数秒内被失败阶梯重新标记。对**当前正显示**的已降级壁纸再点一次不会重试——id 没有变化。
 
-另有一条兜底 `attachFirstFrameWatchdog`：视频挂载 6 s 后仍在图层上，且已经报错或者在播放却没有画面（`readyState < 2` 或 `videoWidth === 0`），就按解码失败计入阶梯。它覆盖 Chromium 既不触发 `error` 也不触发 `playing` 的静默黑屏——没有这条，重试请求一旦失败，图层会一直黑着而条目仍留在网格里。
+另有一条兜底 `attachFirstFrameWatchdog`：视频挂载 6 s 后仍在图层上，且已经报错或者在播放却没有画面（`readyState < 2` 或 `videoWidth === 0`），就按解码失败计入阶梯；若元素带 error，则按其真实形状分类——code 1/2（网络形）不算解码证据，只有 code 3/4 才写「无法解码」。它覆盖 Chromium 既不触发 `error` 也不触发 `playing` 的静默黑屏——没有这条，重试请求一旦失败，图层会一直黑着而条目仍留在网格里。
 
 ### 3.5 其它运行时
 
-- 轮播：列表来自 WE 播放列表（首次加载时 seed），也可手建/编辑；顺序或随机，间隔 1–120 分钟；定时器只在下一次切换时重建。
+- 轮播：列表来自 WE 播放列表（首次加载时 seed），也可手建/编辑；顺序或随机，间隔 1–120 分钟；定时器是一次性 setTimeout，随每次切换重建；手动修改间隔会立即重置倒计时。
 - 自动暂停：标签页隐藏、电量低于 20% 且未充电；`prefers-reduced-motion` 时默认不播放。
 - FPS：rAF 每秒统计一次，写入 `selection.fps`；隐藏标签页时 rAF 自然停摆。
 
@@ -175,7 +175,7 @@
             └─ 玻璃表面：体色 + 7 层背景 + backdrop-filter（+ 每面位移图）
 ```
 
-`body` 上的三个属性是全局开关：`data-webg-wallpaper`（有壁纸）、`data-webg-dark`（暗色镜像，始终设置）、`data-webg-lens`（折射开启且当前环境可用）。
+`body` 上的三个属性是全局开关：`data-webg-wallpaper`（有壁纸）、`data-webg-lens`（折射开启且当前环境可用）。曾经还有一个 `data-webg-dark` 暗色镜像属性，材质改为永久暗色后无消费者，已随本次修复退役。
 
 ### 4.2 体色与边光
 
@@ -227,7 +227,7 @@
 | 远程页 | `.dshRemotePage` | T3 | 无 | `::before` |
 | 消息气泡 | `[class*="_bubble"]` | — | 无 | 体色 + 边光（内容层，不做背景采样） |
 
-**插件页页头为什么用“壁纸窗口”：** 宿主用 `.pageBar[data-natural]::before` 作为页头的绘制层，背景读 `--dsw-alias-bg-base`；插件把该令牌设为 `transparent` 后，页头全透明，滚过的内容会从吸顶栏里透出来。CSS 没有“透明且遮挡”的解法：`backdrop-filter` 只是把背景重新上色（擦不掉），给滚动容器加 `clip-path` 又会把吸顶栏一起裁掉。因此插件在栏内挂一个窗口：`syncHeaderWindow()` 把当前媒体复制进 `.webg-header-window`（高度取 `--plugin-header-paint-height`，`overflow:hidden`，`z-index:-1`），内部 `.webg-header-frame` 按“视口尺寸、减去栏的偏移”摆放，克隆的 `.webg-media` 与原层共用同一套 `object-fit`/裁剪/镜像/模糊样式，像素位置一致；窗口还复制了原层的画布底色（`.webg-header-frame` 的 `--webg-layer-bg`）、同一张抖动噪点（`::after`）和同色的遮罩（`.webg-header-veil` 读 `--webg-scrim-color`），所以暗化与模糊都随页面壁纸实时变化、逐像素对齐；视频克隆静音循环并每秒对齐 `currentTime`，web 壁纸退回预览图。窗口在栏的堆叠上下文里绘制于滚动行之上、标题与标签之下，宿主的 `::after` 分隔线仍在最上层；无栏或无选中壁纸时移除。
+**插件页页头为什么用“壁纸窗口”：** 宿主用 `.pageBar[data-natural]::before` 作为页头的绘制层，背景读 `--dsw-alias-bg-base`；插件把该令牌设为 `transparent` 后，页头全透明，滚过的内容会从吸顶栏里透出来。CSS 没有“透明且遮挡”的解法：`backdrop-filter` 只是把背景重新上色（擦不掉），给滚动容器加 `clip-path` 又会把吸顶栏一起裁掉。因此插件在栏内挂一个窗口：`syncHeaderWindow()` 把当前媒体复制进 `.webg-header-window`（高度取 `--plugin-header-paint-height`，`overflow:hidden`，`z-index:-1`），内部 `.webg-header-frame` 按“视口尺寸、减去栏的偏移”摆放，克隆的 `.webg-media` 与原层共用同一套 `object-fit`/裁剪/镜像/模糊样式，像素位置一致；窗口还复制了原层的画布底色（`.webg-header-frame` 的 `--webg-layer-bg`）、同一张抖动噪点（`::after`）和同色的遮罩（`.webg-header-veil` 读 `--webg-scrim-color`），所以暗化与模糊都随页面壁纸实时变化、逐像素对齐；视频克隆静音循环并每秒对齐 `currentTime`，web 壁纸退回预览图；窗口级 scroll/resize 监听(rAF 合帧)在 bar 未吸顶的滚动段即时重锚定条带，不再依赖 1 Hz 定时器追赶。窗口在栏的堆叠上下文里绘制于滚动行之上、标题与标签之下，宿主的 `::after` 分隔线仍在最上层；无栏或无选中壁纸时移除。
 
 **为什么有的表面把滤镜放在 `::before`：** `backdrop-filter` 会让元素成为固定/绝对后代的包含块。设置弹窗里装着第三方分区，billion-context 的 "bili 设置"把固定层锚到视口，滤镜一旦落在面板上，整棵树会错位甚至空白。`::before` 承载材质、不做任何人的祖先，内容锚定不受影响。同理适用于 `.dshRemotePage`。设置弹窗自身只有在**不包含**浮层窗口面板时才把滤镜放在元素上。
 
@@ -245,7 +245,7 @@
 
 ```sh
 npm install        # prepare 钩子触发一次 build
-npm test           # core 14 + host 11
+npm test           # core 16 + host 14
 npm run build      # src/client.js → lib/client.js
 npm run verify     # 在 vm + DOM mock 中加载产物并断言行为
 ```

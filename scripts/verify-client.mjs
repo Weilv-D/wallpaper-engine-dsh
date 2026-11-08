@@ -368,6 +368,11 @@ check('style tag injected on apply', headEl.children.some((n) => n.tagName === '
     !styleCss.includes('--webg-grain:') &&
       // Body is a wallpaper-derived glass body, not a white wash.
       styleCss.includes('--webg-body: hsl(var(--webg-tint-h)') &&
+      (styleCss.match(/--webg-body: hsl\(var\(--webg-tint-h\)[^;]*--webg-k/g) || []).length >= 2 &&
+      // Per-surface density lives in a SURFACE-level re-declaration (custom
+      // property substitution happens at the declaring element, so a
+      // per-surface --webg-k never reaches the body-level formula).
+      (styleCss.match(/data-dsh-bottom-panel/g) || []).length >= 4 &&
       styleCss.includes('--webg-bevel:') &&
       styleCss.includes('calc(0.50 * var(--webg-rim))') &&
       styleCss.includes('calc(0.26 * var(--webg-rim))') &&
@@ -880,13 +885,11 @@ setTimeout(async () => {
       check('veil stays black under a dark-theme snapshot',
         bodyEl.style._props['--webg-scrim-color'] === 'rgba(0,0,0,0.25)',
         bodyEl.style._props['--webg-scrim-color']);
-      check('dark mirror always set (dark-pinned)', bodyEl.attributes['data-webg-dark'] === '');
       emitTheme(false);
       scrimSlider.props.onChange({ target: { value: '25', style: { setProperty() {} } } });
       check('theme flip leaves the veil black (no light branch)',
         bodyEl.style._props['--webg-scrim-color'] === 'rgba(0,0,0,0.25)',
         bodyEl.style._props['--webg-scrim-color']);
-      check('dark mirror stays set under light theme', bodyEl.attributes['data-webg-dark'] === '');
 
       // Blur>0 complement of the fast path: the filter pipeline engages and
       // the noise overlay comes back with its formula-driven opacity.
@@ -1090,21 +1093,32 @@ setTimeout(async () => {
     // Smart veil toggle present in the monitor row.
     check('smart veil toggle present', JSON.stringify(tree).includes('智能可视'));
 
-    // Decode-failure demotion: fire the video's error handler twice → the
-    // first triggers a token refresh+remount, the second demotes video A to
-    // its preview still; manual refresh clears the demotion again.
+    // Decode-failure demotion: fire the video's error handler twice: the
+    // first refetches the CURRENT inventory (a plain fetch, NOT ?refresh=1 -
+    // forcing a re-mint here would kill every OTHER window's tokens and the
+    // two windows would ping-pong recoveries) and remounts; the second
+    // demotes video A to its preview still; manual refresh clears the
+    // demotion again. The fetch snapshot keeps the first check from passing
+    // off the manual-refresh call earlier in the flow (old bug: a whole-
+    // history .some() made the check green no matter what the ladder did).
     const demoteVideo = documentMock.getElementById('wallpaper-engine-dsh-layer').children[0];
     if (demoteVideo && demoteVideo._listeners && demoteVideo._listeners.error) {
+      const fetchesBeforeError = fetchCalls.length;
       demoteVideo._listeners.error();
       await new Promise((r) => setTimeout(r, 20));
-      check('first decode error triggers a token refresh+remount',
-        fetchCalls.some((u) => u.includes('refresh=1')));
+      const retryFetches = fetchCalls.slice(fetchesBeforeError);
+      check('first error refetches the inventory WITHOUT forcing a re-mint',
+        retryFetches.length > 0 && !retryFetches.some((u) => u.includes('refresh=1')),
+        JSON.stringify(retryFetches));
       const remounted = documentMock.getElementById('wallpaper-engine-dsh-layer').children[0];
+      check('first error remounts a fresh element',
+        Boolean(remounted) && remounted !== demoteVideo,
+        remounted && remounted.tagName);
       if (remounted && remounted._listeners && remounted._listeners.error) {
         remounted._listeners.error();
         await new Promise((r) => setTimeout(r, 20));
         const after = documentMock.getElementById('wallpaper-engine-dsh-layer').children[0];
-        check('second decode error demotes to the preview still',
+        check('second failure demotes to the preview still (non-decode shape)',
           after && after.tagName === 'IMG' && /\/preview\//.test(after.src || ''),
           after && after.tagName + ' ' + (after.src || ''));
         check('demotion flagged in the status row',
@@ -1339,6 +1353,62 @@ setTimeout(async () => {
       failFetch = false;
     }
 
+
+    // ── Watchdog classification: the 6s first-frame watchdog follows the
+    // error shape the element reports. A network error (code 2) is NOT decode
+    // evidence - a host restart mid-mount must not permanently hide a good
+    // wallpaper via a real fingerprint in the undecodable store. A decode-
+    // shaped error (code 3) IS: the entry leaves the grid.
+    {
+      const dogCard = cardByTitle(collectButtons(pickerRenders[0]()), 'Clip C');
+      check('Clip C available for the watchdog test', Boolean(dogCard));
+      if (dogCard) {
+        dogCard.props.onClick();
+        await new Promise((r) => setTimeout(r, 20));
+        const dogVideo = documentMock.getElementById('wallpaper-engine-dsh-layer').children[0];
+        check('Clip C mounts as a video', Boolean(dogVideo) && dogVideo.tagName === 'VIDEO', dogVideo && dogVideo.tagName);
+        if (dogVideo) {
+          // The preview-less section already burned Clip C's ladder (two
+          // errors, cleared selection). A successful frame resets it.
+          if (dogVideo._listeners && dogVideo._listeners.loadeddata) {
+            dogVideo._listeners.loadeddata();
+          }
+          const fetchesBeforeDog = fetchCalls.length;
+          dogVideo.error = { code: 2 };
+          dogVideo.paused = false;
+          const wd = [...timers].reverse().find((t) => !t.cleared && !t.fired && t.ms === 6000);
+          check('watchdog timer armed for Clip C', Boolean(wd));
+          if (wd) {
+            wd.fn();
+            await new Promise((r) => setTimeout(r, 20));
+            const dogFetches = fetchCalls.slice(fetchesBeforeDog);
+            check('watchdog books a NETWORK error as non-decode (plain refetch, no re-mint)',
+              dogFetches.length > 0 && !dogFetches.some((u) => u.includes('refresh=1')),
+              JSON.stringify(dogFetches));
+            const gridAfterNetwork = pickerRenders[0]();
+            check('network-shaped failure does NOT hide the entry',
+              Boolean(cardByTitle(collectButtons(gridAfterNetwork), 'Clip C')));
+            const dogVideo2 = documentMock.getElementById('wallpaper-engine-dsh-layer').children[0];
+            if (dogVideo2 && dogVideo2 !== dogVideo && dogVideo2._listeners && dogVideo2._listeners.error) {
+              dogVideo2.error = { code: 3 };
+              // Second hit via the error EVENT: the decode classification
+              // (code 3/4 -> undecodable) is the same handleMediaFailure(sel,
+              // true) call the watchdog makes, but the event timing is
+              // deterministic in the sandbox (the re-armed 6s timers race).
+              dogVideo2.error = { code: 3 };
+              dogVideo2._listeners.error();
+              await new Promise((r) => setTimeout(r, 20));
+              check('decode-shaped failure (code 3) removes the entry from the grid',
+                !cardByTitle(collectButtons(pickerRenders[0]()), 'Clip C'));
+            }
+            // Restore a selection for the downstream dispose/re-apply
+            // sections (Clip C just left the grid as undecodable).
+            const restoreCard = cardByTitle(collectButtons(pickerRenders[0]()), 'Web B');
+            if (restoreCard) { restoreCard.props.onClick(); }
+          }
+        }
+      }
+    }
     // ── i18n: default UI is Chinese; switching to English re-renders. ──
     const langSelect = collectSelects(tree).find((s) =>
       String(s.props.className || '').includes('webg-lang-select'));
@@ -1376,7 +1446,6 @@ setTimeout(async () => {
   check('all layers removed on dispose', documentMock.querySelectorAll('.webg-layer').length === 0);
   check('scrim removed on dispose', !documentMock.getElementById('wallpaper-engine-dsh-scrim'));
   check('body attribute removed on dispose', bodyEl.attributes['data-webg-wallpaper'] === undefined);
-  check('dark-theme mirror removed on dispose', bodyEl.attributes['data-webg-dark'] === undefined);
   check('css vars cleared on dispose', Object.keys(bodyEl.style._props).length === 0);
   check('rotation timer cleared on dispose', !pendingRotation || pendingRotation.cleared);
   check('crossfade/clear leave timers cleared on dispose',

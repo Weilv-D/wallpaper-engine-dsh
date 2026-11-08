@@ -59,6 +59,10 @@ function gates() {
   console.log('release: gates passed - test, build, verify');
 }
 function bumpAndPush(level, next) {
+  // Gates ran npm run build: a stale committed lib/client.js would leave the
+  // tree dirty right here and npm version would fail with a misleading
+  // 'not clean' error. Point at the real cause before bumping.
+  if (capture('git status --porcelain')) die('working tree became dirty during gates (stale lib/client.js? commit the rebuilt artifact or fix the source) - aborted before the version bump');
   run('npm version ' + level + ' -m "chore: release v%s"');
   run('git push origin main --follow-tags');
   console.log('release: pushed main + ' + next);
@@ -70,8 +74,9 @@ async function watchPublish(next) {
     const raw = tryCapture('gh run list --workflow publish.yml --limit 10 --json databaseId,event,headBranch,status');
     if (raw) {
       const runs = JSON.parse(raw);
-      const hit = runs.find((r) => r.event === 'push' && r.headBranch === next) ||
-        runs.find((r) => r.event === 'push' && r.status !== 'completed');
+      // Match THIS tag's run only - the old fallback grabbed ANY in-flight
+      // push run, which under concurrent tag pushes watched the wrong one.
+      const hit = runs.find((r) => r.event === 'push' && r.headBranch === next);
       if (hit) { runId = hit.databaseId; break; }
     }
     await sleep(15000);

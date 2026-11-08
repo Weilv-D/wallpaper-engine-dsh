@@ -39,10 +39,9 @@ const React = require("react");
 const SETTINGS_KEY = "wallpaper-engine-dsh:selection";
 const INVENTORY_URL = "/we-background/inventory";
 const ACTIVE_ATTR = "data-webg-wallpaper";
-// Plugin-owned dark mirror, still written for inspection/tooling. The
-// stylesheet no longer keys on it (the material is dark-pinned, so nothing
-// branches); it just reports that the dark recipe is active.
-const DARK_ATTR = "data-webg-dark";
+// The retired dark mirror (data-webg-dark) used to be written here: the
+// material is permanently dark, nothing ever consumed it, and the attribute
+// is gone as of this release (write/remove/change-key all retired).
 const LAYER_ID = "wallpaper-engine-dsh-layer";
 const SCRIM_ID = "wallpaper-engine-dsh-scrim";
 const STYLE_TAG_ID = "wallpaper-engine-dsh/styles";
@@ -82,6 +81,7 @@ const STRINGS = {
     searchPlaceholder: "搜索壁纸(标题或 ID)…",
     matched: (m, n) => "匹配 " + m + " / " + n + " 张",
     emptyNoInstall: "未检测到 Wallpaper Engine — 请确认已通过 Steam 安装",
+    emptyHidden: (n) => "已发现 " + n + " 张壁纸,当前可用的都已因无法解码被暂时移出;替换或重新编码文件后会自动恢复",
     emptyNoUsable: (n) => "已发现 " + n + " 张壁纸,但都缺少可播放内容或预览图",
     emptyNoProjects: "未在任何项目目录中发现壁纸(默认项目/我的项目/创意工坊)",
     noMatch: (q) => "没有匹配「" + q + "」的壁纸",
@@ -127,7 +127,7 @@ const STRINGS = {
     lens: "表面折射",
     lensTitle: "按表面尺寸生成折射贴图;关闭后只剩背景模糊,便于对比排查",
     fpsTitle: "页面当前渲染帧率",
-    lowFpsHint: "帧率偏低,可尝试暂停视频、增大壁纸模糊或换用静态壁纸",
+    lowFpsHint: "帧率偏低,可尝试暂停视频或增大壁纸模糊",
     language: "语言",
     langAuto: "自动",
     fit: "排布",
@@ -172,6 +172,7 @@ const STRINGS = {
     searchPlaceholder: "Search wallpapers (title or ID)…",
     matched: (m, n) => m + " / " + n + " matched",
     emptyNoInstall: "Wallpaper Engine not found — make sure it is installed via Steam",
+    emptyHidden: (n) => "Found " + n + " wallpapers, but every usable one is hidden as undecodable; replace or re-encode the file and it returns",
     emptyNoUsable: (n) => "Found " + n + " wallpapers, but none have playable media or a preview image",
     emptyNoProjects: "No wallpapers found in any project folder (defaults / my projects / workshop)",
     noMatch: (q) => "No wallpapers match \"" + q + "\"",
@@ -217,7 +218,7 @@ const STRINGS = {
     lens: "Surface refraction",
     lensTitle: "Generates a refraction map per surface; off leaves plain backdrop blur, handy for comparison",
     fpsTitle: "Current page frame rate",
-    lowFpsHint: "Low frame rate — try pausing the video, raising wallpaper blur, or using a still wallpaper",
+    lowFpsHint: "Low frame rate - try pausing the video or raising wallpaper blur",
     language: "Language",
     langAuto: "Auto",
     fit: "Fit",
@@ -325,7 +326,7 @@ function readRotationGroups(raw, baseName) {
 function readPersisted() {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return { id: "", ...DEFAULTS };
+    if (!raw) return { id: "", ...DEFAULTS, rotationGroups: [] };
     const o = JSON.parse(raw);
     return {
       id: typeof o.id === "string" ? o.id : "",
@@ -351,13 +352,15 @@ function readPersisted() {
       // creation re-seats both into the envelope the CURRENT fit mode
       // allows (free: zoom ≥ 0.1 with keep-visible pans; others: gap-free).
       zoom: clampNum(o.zoom, 0.1, 4, DEFAULTS.zoom),
-      offsetX: clampNum(o.offsetX, -300, 300, DEFAULTS.offsetX),
-      offsetY: clampNum(o.offsetY, -300, 300, DEFAULTS.offsetY),
+      // +-300 clamped a legally-stored extreme (envelope ceiling ~322.84) into a
+      // framing jump on reload; +-330 covers the whole envelope.
+      offsetX: clampNum(o.offsetX, -330, 330, DEFAULTS.offsetX),
+      offsetY: clampNum(o.offsetY, -330, 330, DEFAULTS.offsetY),
       rotation: clampNum(o.rotation, -1080, 1080, DEFAULTS.rotation),
       mirrored: o.mirrored === true,
     };
   } catch {
-    return { id: "", ...DEFAULTS };
+    return { id: "", ...DEFAULTS, rotationGroups: [] };
   }
 }
 
@@ -497,6 +500,10 @@ function markUndecodable(id) {
   const w = selection.inventory.wallpapers.find((x) => x.id === id);
   const mark = (w && mediaFingerprint(w)) || "*";
   if (undecodable.get(id) === mark) return;
+  // delete+set refreshes the insertion position: a re-marked file must be
+  // evicted LAST when the store hits its cap, not first (plain set() keeps
+  // the old position and the live verdict would be evicted first).
+  undecodable.delete(id);
   undecodable.set(id, mark);
   persistUndecodable();
   mediaFailures.delete(id);
@@ -813,7 +820,11 @@ function triggerGlassWake() {
   }, 450);
 }
 function applySelection(id) {
-  if (selection.adjusting) exitAdjust();
+  // Only eject the adjust overlay when the layer NODE itself is about to
+  // change (a different id, or a forced remount). Same-id re-applies keep
+  // the node (refreshLiveMediaUrls), so exiting there would yank the user
+  // out of an active framing gesture for nothing.
+  if (selection.adjusting && ((id || "") !== selection.id || forceRemount)) exitAdjust();
   const prevId = selection.id;
   selection.id = id || "";
   if (selection.id !== prevId) {
@@ -959,15 +970,18 @@ function handleMediaFailure(sel, decodeFailure) {
   mediaFailures.set(id, count);
   const w = selection.inventory.wallpapers.find((x) => x.id === id);
   if (count === 1) {
-    // Maybe just a dead token: refetch fresh URLs and remount. Throttled
-    // PER WALLPAPER - a global window would strand a video whose first
-    // error lands soon after an unrelated recovery (no remount, no second
-    // error, blank layer until a manual refresh).
+    // Maybe just a dead token: refetch the CURRENT inventory (plain fetch -
+    // another window's refresh=1 may have re-minted the tokens, and forcing
+    // another re-mint here would kill the OTHER window's URLs, so two clients
+    // would ping-pong recoveries killing each other's tokens) and remount.
+    // Throttled PER WALLPAPER - a global window would strand a video whose
+    // first error lands soon after an unrelated recovery (no remount, no
+    // second error, blank layer until a manual refresh).
     const now = Date.now();
     if (now - (lastRecoveryAt.get(id) || 0) < 10000) return;
     lastRecoveryAt.set(id, now);
     forceRemount = true;
-    loadInventory(true);
+    loadInventory(false);
   } else if (decodeFailure) {
     // The second failure with a decode-shaped cause (MEDIA_ERR_DECODE,
     // MEDIA_ERR_SRC_NOT_SUPPORTED, or zero decoded frames) means the bytes
@@ -1069,10 +1083,16 @@ function attachFirstFrameWatchdog(media, sel) {
     window.setTimeout(() => {
       const layer = document.getElementById(LAYER_ID);
       if (!layer || layer.querySelector("video") !== media) return;
-      const dead = Boolean(media.error)
-        || (!media.paused && (media.readyState < 2 || media.videoWidth === 0));
-      if (!dead) return;
-      handleMediaFailure(sel, true);
+      // Classify by the error the element actually reports: a network-shaped
+      // failure (code 1/2) is NOT decode evidence - recording it as one wrote
+      // a real fingerprint into the undecodable store for a file that may be
+      // perfectly fine (a host restart mid-mount), with no UI exit. Stalls
+      // without any error keep the decode read: there is no other signal, and
+      // the remount round-trip gives slow media a fresh window.
+      const code = media.error ? media.error.code : 0;
+      const stalled = !media.paused && (media.readyState < 2 || media.videoWidth === 0);
+      if (!media.error && !stalled) return;
+      handleMediaFailure(sel, (code === 3 || code === 4) || (!media.error && stalled));
       arm(); // a failed inventory refresh leaves this element mounted
     }, 6000);
   };
@@ -1094,6 +1114,17 @@ function attachFirstFrameWatchdog(media, sel) {
 // zoom runs 0.1–4×, rotation is arbitrary, and pan is only clamped to keep
 // a sliver (≥10 % of the box) on screen so the wallpaper can never be
 // dragged entirely out of sight.
+// The framing envelope clamps pan offsets in % of the media box, and the
+// media box IS the viewport. Read the live viewport aspect (documentElement
+// first, then window, then a square fallback that keeps the single-k
+// behavior when no dimensions are available).
+function viewportDims() {
+  const de = (typeof document !== "undefined" && document.documentElement) || null;
+  const w = (de && de.clientWidth) || (typeof window !== "undefined" && window.innerWidth) || 0;
+  const h = (de && de.clientHeight) || (typeof window !== "undefined" && window.innerHeight) || 0;
+  return w > 0 && h > 0 ? { w: w, h: h } : { w: 1, h: 1 };
+}
+
 function clampCrop() {
   if (!isFreeFit()) selection.rotation = 0;
   else {
@@ -1103,17 +1134,26 @@ function clampCrop() {
     // Modulo keeps every equivalent representation identical on disk.
     selection.rotation = ((selection.rotation + 180) % 360 + 360) % 360 - 180;
   }
-  selection.zoom = Math.round(Math.min(4, Math.max(isFreeFit() ? 0.1 : 1, selection.zoom)) * 100) / 100;
+  // Three decimals: 2-decimal rounding ate small trackpad deltas at the 0.1/4
+  // boundaries (a 1-2px wheel tick rounded back to the same value and the
+  // view stopped responding until a bigger scroll arrived).
+  selection.zoom = Math.round(Math.min(4, Math.max(isFreeFit() ? 0.1 : 1, selection.zoom)) * 1000) / 1000;
   if (isFreeFit()) {
     // Content spans ±zoom·50 % of the box around its centre; the pan offset
-    // shifts it by its own % of the box. Rotation expands the projected
-    // extent by k = |cos θ| + |sin θ| (up to √2 at 45°). |offset| ≤
-    // (zoom·k+1)·50 − 10 keeps ≥10 % of the media visible in both axes.
+    // shifts it by its own % of the box. The envelope: |offset| <= half + 40.
+    // Rotation projects the BOX to a half-extent of
+    // zoom·50·(|cosθ| + |sinθ|·(other-axis / this-axis)) per axis: on a 16:9
+    // screen a 90° swing makes the box half as wide as it is tall, so the
+    // shared square-box k let the X envelope run ~3x looser than the real
+    // keep-visible bound and a one-button ±90° turn could drag the wallpaper
+    // fully off-screen. Per-axis k keeps ≥10 % visible on BOTH axes.
     const rad = selection.rotation * Math.PI / 180;
-    const k = Math.abs(Math.cos(rad)) + Math.abs(Math.sin(rad));
-    const reach = (selection.zoom * k + 1) * 50 - 10;
-    selection.offsetX = Math.min(reach, Math.max(-reach, selection.offsetX));
-    selection.offsetY = Math.min(reach, Math.max(-reach, selection.offsetY));
+    const ar = viewportDims().h / viewportDims().w;
+    const cos = Math.abs(Math.cos(rad)), sin = Math.abs(Math.sin(rad));
+    const reachX = (selection.zoom * (cos + sin * ar) + 1) * 50 - 10;
+    const reachY = (selection.zoom * (cos + sin / ar) + 1) * 50 - 10;
+    selection.offsetX = Math.min(reachX, Math.max(-reachX, selection.offsetX));
+    selection.offsetY = Math.min(reachY, Math.max(-reachY, selection.offsetY));
     return;
   }
   const pan = (selection.zoom - 1) * 50;
@@ -1445,11 +1485,26 @@ function headerBarEl() {
   return document.querySelector('[class*="_pageBar"][data-natural]');
 }
 
+// Scroll/resize re-anchor the strip: the frame is positioned from a rect
+// snapshot (layer box minus bar offset), and during the scroll segment
+// before the bar sticks the snapshot goes stale. rAF-coalesced, and the
+// listeners ride the window (passive, capture for bubbled scrolls).
+let headerWindowViewportBound = false;
+function onHeaderViewportChange() {
+  if (typeof requestAnimationFrame !== "function") { tickHeaderWindow(); return; }
+  requestAnimationFrame(tickHeaderWindow);
+}
+
 function disposeHeaderWindow() {
   if (headerWindowClock && typeof window !== "undefined" && typeof window.clearInterval === "function") {
     window.clearInterval(headerWindowClock);
   }
   headerWindowClock = 0;
+  if (headerWindowViewportBound && typeof window !== "undefined" && typeof window.removeEventListener === "function") {
+    window.removeEventListener("scroll", onHeaderViewportChange, true);
+    window.removeEventListener("resize", onHeaderViewportChange);
+    headerWindowViewportBound = false;
+  }
   if (headerWindow && headerWindow.host && headerWindow.host.parentNode) {
     headerWindow.host.parentNode.removeChild(headerWindow.host);
   }
@@ -1574,6 +1629,13 @@ function syncHeaderWindow() {
       else media.pause();
     }
     if (typeof window !== "undefined" && typeof window.setInterval === "function") {
+    if (!headerWindowViewportBound && typeof window !== "undefined" && typeof window.addEventListener === "function") {
+      // capture:true so scrolls bubbling from inner containers re-anchor the
+      // strip too; rAF-coalesced inside the handler.
+      window.addEventListener("scroll", onHeaderViewportChange, { passive: true, capture: true });
+      window.addEventListener("resize", onHeaderViewportChange, { passive: true });
+      headerWindowViewportBound = true;
+    }
       headerWindowClock = window.setInterval(tickHeaderWindow, 1000);
     }
   } else if (headerWindow.host.parentNode !== bar) {
@@ -1748,7 +1810,7 @@ function materialTokens() {
 // pulled DOWN on the heavier variants: glass compresses the backdrop's tone
 // range, which is what keeps light text readable over a saturated poster
 // without piling on more fill.
-let lastGlassBright = 1.04;
+let lastGlassBright = 1.10;
 function tierChain(tier, blur, bright) {
   // Single source for the caps: tierBlur, so the plain chain and the
   // lens split can never drift apart on an edit.
@@ -1928,8 +1990,9 @@ function createLensSlot(el, spec) {
   disp.setAttribute("in2", "map");
   disp.setAttribute("xChannelSelector", "R");
   disp.setAttribute("yChannelSelector", "G");
-  // Post-displacement blur: paintLensSlot writes the tier blur share here
-  // on every paint (quadrature pair with the CSS head blur in lensChain).
+  // Post-displacement blur: a fixed 0.35 anti-alias, NOT the tier blur
+  // share - paintLensSlot keeps the tier blur in the CSS chain after the
+  // bend (see the rest = 0.35 comment there).
   const soften = document.createElementNS(SVG_NS, "feGaussianBlur");
   soften.setAttribute("stdDeviation", "0.4");
   filter.appendChild(image);
@@ -2044,6 +2107,19 @@ function scanLensSurfaces() {
   try { found = document.body.querySelectorAll(LENS_SELECTOR); } catch { return; }
   for (const el of found) {
     if (el.__webgLens) {
+      // A surface can stop matching (shell class churn re-hashes classes,
+      // the dock attribute can vanish): re-check before repainting, or the
+      // slot keeps consuming a spec whose selector no longer selects it.
+      const still = LENS_SURFACES.some((s) => {
+        try { return el.matches(s.sel); } catch { return false; }
+      });
+      if (!still) {
+        if (lensResizer) lensResizer.unobserve(el);
+        el.__webgLens.filter.remove();
+        clearLensChain(el);
+        delete el.__webgLens;
+        continue;
+      }
       const r = lensRadius(el);
       if (Math.round(el.clientWidth) !== el.__webgLens.w ||
           Math.round(el.clientHeight) !== el.__webgLens.h ||
@@ -2117,7 +2193,7 @@ function attachLensWatcher() {
     if (!document.body.hasAttribute(LENS_ATTR)) return;
     if (lensMutationRelevant(records)) scheduleLensScan();
   });
-  lensMutator.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "data-composer-card", "data-menu-material"] });
+  lensMutator.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "data-composer-card", "data-menu-material", "data-composer-dock"] });
 }
 
 function disposeLenses() {
@@ -2206,19 +2282,13 @@ function syncPointerLight() {
 
 function applyEffects() {
   // A frame can outlive teardown (a slider burst, a scheduled repaint). Once
-  // disposed, every write here would resurrect the dark attr and the vars the
+  // disposed, every write here would resurrect the attrs and the vars the
   // cleanup just removed.
   if (disposed) return;
   // The veil darkens bright wallpapers (the dark material serves light text —
   // this is what makes ANY wallpaper survivable).
   // Material permanently dark (user decision, 2026-11-06): one glass recipe
   // regardless of shell/OS theme; the light branch is retired.
-  const dark = true;
-  if (typeof document !== "undefined" && document.body) {
-    if (!(document.body.hasAttribute && document.body.hasAttribute(DARK_ATTR))) {
-      document.body.setAttribute(DARK_ATTR, "");
-    }
-  }
   // Lens availability. backdrop-filter: url(#id) renders only in
   // Chromium-family engines; Safari parses the declaration and then drops the
   // whole chain at render time, so the lens rides an explicit UA gate instead
@@ -2258,7 +2328,7 @@ function applyEffects() {
     ? (sampledColor.r >> 4) + "." + (sampledColor.g >> 4) + "." + (sampledColor.b >> 4)
     : "";
   const key = [
-    dark, selection.scrim, selection.border, selection.blur, selection.wallpaperBlur,
+    selection.scrim, selection.border, selection.blur, selection.wallpaperBlur,
     selection.autoScrim, roundedLum, colorKey, Math.round(sampledVariety * 20),
     selection.fit, selection.zoom,
     selection.offsetX, selection.offsetY, selection.rotation, selection.mirrored,
@@ -2291,7 +2361,7 @@ function applyEffects() {
   // behind it: a bright wallpaper dims the melt a touch, a dark one lifts
   // it a whisper (a full lift turned near-black backdrops into grey smoke —
   // the opposite of the clear read Apple's dark glass keeps). No luminance
-  // evidence (null, before the first sample) → the neutral 1.04 base.
+  // evidence (null, before the first sample) → the neutral 1.10 base.
   let glassBright = 1.10;
   if (sampledLuminance !== null) {
     // Asymmetric on purpose: bright content may DIM the melt (that helps
@@ -2493,12 +2563,26 @@ function matchesQuery(w, q) {
   return (w.title || "").toLowerCase().includes(needle) || (w.id || "").toLowerCase().includes(needle);
 }
 
+// Preview URLs that failed to load in the grid: the img is replaced by the
+// placeholder instead of a permanently hidden node (the old inline
+// display:none survived token re-mints because React reuses the card by id).
+// A re-minted preview URL is a NEW entry, so 刷新 retries automatically.
+const failedPreviews = new Set();
+
+// Playable entries currently hidden by an undecodable verdict. Drives the
+// empty-state message: when every usable wallpaper is hidden this way the
+// user needs the replace-or-reencode hint, not the missing-media one.
+function hiddenUndecodableCount() {
+  const inv = selection.inventory && selection.inventory.wallpapers;
+  return (inv || []).filter((w) => w.playable && isUndecodable(w)).length;
+}
+
 /** Preview <img>, or the "no preview" placeholder — shared by grid + editor. */
 function PreviewMedia(w, t) {
-  return w.preview
+  return w.preview && !failedPreviews.has(w.preview)
     ? React.createElement("img", {
         src: w.preview, alt: w.title, loading: "lazy", decoding: "async",
-        onError: (e) => { e.target.style.display = "none"; },
+        onError: () => { failedPreviews.add(w.preview); emit(); },
       })
     : React.createElement("span", { className: "webg-card-placeholder" }, t.noPreview);
 }
@@ -2744,7 +2828,9 @@ function WallpaperGrid(t, sel, usableList, filteredList, q) {
       ? React.createElement("span", { className: "webg-hint webg-grid-empty" },
           sel.inventory.installDir
             ? (sel.inventory.total > 0
-                ? t.emptyNoUsable(sel.inventory.total)
+                ? (hiddenUndecodableCount() > 0
+                    ? t.emptyHidden(sel.inventory.total)
+                    : t.emptyNoUsable(sel.inventory.total))
                 : t.emptyNoProjects)
             : t.emptyNoInstall)
       : filteredList.length === 0
@@ -3337,6 +3423,13 @@ const CSS = `
      laid-on gloss + four specular pools + the bevel stack, over the t2 chain
      (or the per-view lens filter once paintLensSlot has measured it). */
   body[${ACTIVE_ATTR}] [data-composer-card] {
+    /* Local re-declaration: paintPointerLight writes --webg-pointer-gloss
+       inline on THIS element, and var() substitution happens per element —
+       the body-level stack was already substituted with the body default
+       (none) before the card inherited it, so the pointer layer never
+       rendered. Re-declaring re-runs substitution here, where the inline
+       value lives. */
+    --webg-glass-layers: var(--webg-dim-veil), var(--webg-spec-gloss), var(--webg-gloss), var(--webg-pointer-gloss);
     background-color: var(--webg-body);
     background-image: var(--webg-glass-layers);
     background-size: var(--webg-glass-sizes);
@@ -3376,6 +3469,17 @@ const CSS = `
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
     box-shadow: var(--webg-bevel);
+  }
+
+  /* Per-surface density (bubbles 1.45, Q&A card 1.5, bottom panel 0.8) only
+     works when --webg-body is re-declared ON the surface: var() substitution
+     happens at the declaring element, so descendants inherit the body-computed
+     value and a per-surface --webg-k can never reach the body-level
+     declaration. Re-declaring here re-runs the substitution per surface
+     against the surface's own --webg-k. */
+  body[${ACTIVE_ATTR}] [class*="_bubble"],
+  body[${ACTIVE_ATTR}] [data-dsh-bottom-panel] {
+    --webg-body: hsl(var(--webg-tint-h) var(--webg-tint-s) var(--webg-tint-l) / calc(var(--webg-tint-a) * var(--webg-k)));
   }
 
   /* Composer controls, Apple's control tiers over media (WWDC25 session
@@ -3795,6 +3899,18 @@ const CSS = `
     body[${ACTIVE_ATTR}] [data-dsh-bottom-panel] [class$="_tabBarPlus"] {
       background-color: var(--dsw-alias-bg-layer-1);
     }
+    /* Surface-level density re-declarations would beat the body-level solid
+       fill this block sets; restore the solid at the same level. */
+    body[${ACTIVE_ATTR}] [class*="_bubble"],
+    body[${ACTIVE_ATTR}] [data-dsh-bottom-panel] {
+      --webg-body: #26272c;
+    }
+    /* The overlay panel's background went transparent to hand the material
+       to the ::before; restore the solid fill or the panel body stays
+       transparent under reduced transparency. */
+    body[${ACTIVE_ATTR}] [class$="_overlay"] > [class$="_panel"]:not([data-menu-material]) {
+      background-color: var(--dsw-alias-bg-layer-2);
+    }
   }
 
   /* Accessibility: prefers-contrast (Windows/macOS "increase contrast").
@@ -3828,6 +3944,13 @@ const CSS = `
     body[${ACTIVE_ATTR}] [class$="_newSession"],
     body[${ACTIVE_ATTR}] [class$="_newSession"]:hover:not(:disabled) {
       background-color: var(--dsw-alias-button-elevated-fill);
+    }
+    /* The density re-declaration paints bubbles and the bottom panel
+       translucent at the surface element, which would beat the body-level
+       contrast fill; restore at the same level. */
+    body[${ACTIVE_ATTR}] [class*="_bubble"],
+    body[${ACTIVE_ATTR}] [data-dsh-bottom-panel] {
+      --webg-body: rgb(38, 40, 45);
     }
   }
 
@@ -4203,9 +4326,9 @@ function apply(ctx) {
         for (const node of [...doomed]) node.remove();
         const scrim = document.getElementById(SCRIM_ID);
         if (scrim) scrim.remove();
+        stopPointerLight();
         clearEffects();
         document.body.removeAttribute(ACTIVE_ATTR);
-        document.body.removeAttribute(DARK_ATTR);
       };
     });
   }

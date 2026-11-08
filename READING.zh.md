@@ -14,8 +14,8 @@
 | `lib/client.js` | 浏览器半区的构建产物 | 否 | 由 `scripts/build-client.mjs` 生成，**不要手改** |
 | `lib/index.js` | 宿主半区：HTTP 路由、令牌、缓存 | 是 | Node 侧，没有 `src/` 对应文件 |
 | `lib/core.js` | 纯逻辑：Steam 发现、`project.json`、Range、MIME | 是 | 不碰 IO，全部由调用方注入 |
-| `test/core.test.mjs` | 纯逻辑单测 | 是 | 15 个用例 |
-| `test/host.test.mjs` | 真实 HTTP 集成测试 | 是 | 11 个用例，走真实 loopback 服务器 |
+| `test/core.test.mjs` | 纯逻辑单测 | 是 | 16 个用例 |
+| `test/host.test.mjs` | 真实 HTTP 集成测试 | 是 | 14 个用例，走真实 loopback 服务器 |
 | `scripts/build-client.mjs` | 源码 → 产物的包装器 | 是 | 只做 banner 剥离、模块包装、缩进 |
 | `scripts/verify-client.mjs` | 产物的行为验证 | 是 | 在 `vm` + DOM mock 里跑真实 bundle |
 | `scripts/release.mjs` | 发布门禁与推送 | 是 | 见 `RELEASING.zh.md` |
@@ -104,7 +104,7 @@ src/client.js →  lib/client.js        （浏览器：源码 → 构建产物�
 ## 4. 命名与注释约定
 
 - CSS 变量统一 `--webg-*`；宿主令牌统一 `--dsw-*`。写宿主令牌的地方都是"适配外壳"，不是插件自有材质。
-- DOM 属性统一 `data-webg-*`：`data-webg-wallpaper`（激活）、`data-webg-dark`（暗色镜像）、`data-webg-lens`（透镜开启）。
+- DOM 属性统一 `data-webg-*`：`data-webg-wallpaper`（激活）、`data-webg-lens`（透镜开启）。`data-webg-dark` 已退役（材质永久暗色，从未有消费者）。
 - 元素 id 统一 `wallpaper-engine-dsh-*`。
 - 函数名前缀表达职责：`read*`（纯解析）、`apply*`（写 DOM/变量）、`sync*`（对齐状态）、`attach*`（绑事件）、`scan*`（发现表面）、`paint*`（重绘单个表面）。
 - 注释里出现"暂时""先这样"时，通常意味着有一个未记录的约束；改之前先找对应提交或本文档的决策记录。
