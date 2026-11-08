@@ -123,7 +123,7 @@ const STRINGS = {
     autoScrim: "智能可视",
     autoScrimTitle: "采样壁纸亮度,过亮时自动加强遮罩,保证文字可读",
     pointerLight: "指针高光",
-    pointerLightTitle: "高光跟着鼠标在玻璃表面移动(默认关闭,开启后每帧重绘该表面)",
+    pointerLightTitle: "一道贴边细光斑随鼠标沿玻璃边缘滑动(默认关闭,开启后每帧重绘该表面)",
     lens: "表面折射",
     lensTitle: "按表面尺寸生成折射贴图;关闭后只剩背景模糊,便于对比排查",
     fpsTitle: "页面当前渲染帧率",
@@ -214,7 +214,7 @@ const STRINGS = {
     autoScrim: "Smart veil",
     autoScrimTitle: "Samples wallpaper brightness and strengthens the veil when needed so text stays readable",
     pointerLight: "Pointer highlight",
-    pointerLightTitle: "The specular follows the pointer across glass surfaces (off by default; repaints that surface each frame)",
+    pointerLightTitle: "A thin rim glint slides along the glass edges with the pointer (off by default; repaints that surface each frame)",
     lens: "Surface refraction",
     lensTitle: "Generates a refraction map per surface; off leaves plain backdrop blur, handy for comparison",
     fpsTitle: "Current page frame rate",
@@ -2225,9 +2225,18 @@ let pointerY = 0;
 function paintPointerLight() {
   pointerFrame = 0;
   if (!pointerCard || !pointerCard.style) return;
+  // The glint is a RIM highlight, not a face pool: Apple's measured specular
+  // decays within ~7 device px of the edge and the material models the edge
+  // as a lit column, so the pointer light rides the top rim (positioned by
+  // the pointer's x) with a faint bottom bounce. It dims as the pointer
+  // sinks away from the glass top - continuous, edge-bound, no face blob.
+  const x = pointerX.toFixed(1);
+  const dim = (1 - (pointerY / 100) * 0.6).toFixed(3);
   pointerCard.style.setProperty("--webg-pointer-gloss",
-    "radial-gradient(46% 90% at " + pointerX.toFixed(1) + "% " + pointerY.toFixed(1) +
-    "%, hsl(0 0% 100% / calc(var(--webg-spec) * 0.30)), transparent 62%)");
+    "radial-gradient(20% 6px at " + x + "% 0px, " +
+      "hsl(0 0% 100% / calc(var(--webg-spec) * 0.45 * " + dim + ")), transparent 100%)," +
+    "radial-gradient(16% 4px at " + x + "% 100%, " +
+      "hsl(var(--webg-tint-h2) 40% 88% / calc(var(--webg-spec) * 0.18 * " + dim + ")), transparent 100%)");
 }
 
 function releasePointerLight() {
@@ -2236,6 +2245,10 @@ function releasePointerLight() {
 }
 
 function onPointerLightMove(ev) {
+  // Self-guard: if the setting was flipped off through any path that missed
+  // the unbind (state desync class), the next event tears the whole thing
+  // down instead of painting forever.
+  if (!selection.pointerLight || !selection.id) { stopPointerLight(); return; }
   const target = ev.target;
   const card = target && typeof target.closest === "function"
     ? target.closest("[data-composer-card]")
@@ -2249,11 +2262,9 @@ function onPointerLightMove(ev) {
   if (!rect.width || !rect.height) return;
   pointerX = ((ev.clientX - rect.left) / rect.width) * 100;
   pointerY = ((ev.clientY - rect.top) / rect.height) * 100;
-  if (typeof requestAnimationFrame !== "function") {
-    paintPointerLight();
-    return;
-  }
-  if (!pointerFrame) pointerFrame = requestAnimationFrame(paintPointerLight);
+  if (typeof requestAnimationFrame !== "function") { paintPointerLight(); return; }
+  pointerFrame = requestAnimationFrame(paintPointerLight);
+  if (!pointerFrame) paintPointerLight(); // sandbox/legacy rAF: no handle → paint now
 }
 
 function onPointerLightLeave() {
@@ -2262,23 +2273,31 @@ function onPointerLightLeave() {
 }
 
 function stopPointerLight() {
-  if (!pointerBound || typeof document === "undefined") return;
-  document.removeEventListener("pointermove", onPointerLightMove);
-  document.removeEventListener("pointerleave", onPointerLightLeave);
-  pointerBound = false;
+  if (typeof document === "undefined") return;
+  if (pointerBound) {
+    document.removeEventListener("pointermove", onPointerLightMove);
+    document.removeEventListener("pointerleave", onPointerLightLeave);
+    pointerBound = false;
+  }
+  // Unconditional: pending rAF + inline property + pointerCard, regardless
+  // of bind state - the old !pointerBound early-return let a desynced state
+  // keep the painted highlight alive after unchecking.
   onPointerLightLeave();
 }
 
 function syncPointerLight() {
   const want = Boolean(selection.pointerLight) && Boolean(selection.id);
-  if (want && !pointerBound && typeof document !== "undefined") {
-    document.addEventListener("pointermove", onPointerLightMove, { passive: true });
-    document.addEventListener("pointerleave", onPointerLightLeave, { passive: true });
-    pointerBound = true;
+  if (want) {
+    if (!pointerBound && typeof document !== "undefined") {
+      document.addEventListener("pointermove", onPointerLightMove, { passive: true });
+      document.addEventListener("pointerleave", onPointerLightLeave, { passive: true });
+      pointerBound = true;
+    }
     return;
   }
-  if (!want) stopPointerLight();
+  stopPointerLight();
 }
+
 
 function applyEffects() {
   // A frame can outlive teardown (a slider burst, a scheduled repaint). Once
@@ -3372,14 +3391,14 @@ const CSS = `
       radial-gradient(56% 13% at 50% -5%, hsl(0 0% 100% / calc(var(--webg-spec) * 0.18)), transparent 64%),
       radial-gradient(46% 18% at 50% 104%, hsl(var(--webg-tint-h2) 40% 88% / calc(var(--webg-spec) * 0.14)), transparent 66%);
     --webg-pointer-gloss: none;
-    /* Layer order: dim veil, FOUR specular pools, gloss, pointer gloss
-       = 7 layers. The sizes/repeats lists must match the stack one entry per layer:
-       a short list cycles from the start, so the fourth specular radial would
-       pick up a neighbour's size and tile one gradient across the surface as
-       bright squares. */
+    /* Layer order: dim veil, FOUR specular pools, gloss, pointer glint
+       (top band + bottom bounce) = 8 layers. The sizes/repeats lists must
+       match the stack one entry per layer: a short list cycles from the
+       start, so the fourth specular radial would pick up a neighbour's
+       size and tile one gradient across the surface as bright squares. */
     --webg-glass-layers: var(--webg-dim-veil), var(--webg-spec-gloss), var(--webg-gloss), var(--webg-pointer-gloss);
-    --webg-glass-sizes: 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%;
-    --webg-glass-repeats: no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat;
+    --webg-glass-sizes: 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%;
+    --webg-glass-repeats: no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat;
     /* The bevel: a lit round column, not a uniform outline. Top specular
        (1px hard + a 3px decay so the edge has a falloff instead of reading
        as a sticker), a bottom return bounce, dark side walls, an inner

@@ -23,7 +23,7 @@ A DSH bundle that turns the local **Wallpaper Engine** library into a living bac
 - Web wallpaper pixels are unreadable inside the sandbox, so the Smart veil samples their preview image instead.
 - The glass body is sampled from the wallpaper: hue from its average colour, chroma capped at 14%. The body lightens as the scene darkens; its alpha follows brightness and busyness together (0.16–0.34).
 - The edge is modelled as a lit column: a specular along the top, a bounce along the bottom, darkened side walls, and a dark outer contour. Edge light strengthens as the wallpaper darkens.
-- The specular is static by default; the Pointer highlight setting makes it follow the mouse across the composer (repaints each frame, off by default).
+- The specular is static by default; the Pointer highlight setting rides a thin edge glint along the composer's rims with the mouse (a 6px top band plus a fainter bottom bounce, never deeper than 6px into the face, dimming as the pointer sinks; repaints each frame, off by default).
 - When the composer floats over bright content, an inner dimming layer rises to a 35% ceiling (the HIG value for this case).
 
 ### Refraction

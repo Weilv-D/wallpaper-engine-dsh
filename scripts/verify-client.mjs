@@ -452,7 +452,7 @@ check('style tag injected on apply', headEl.children.some((n) => n.tagName === '
     const sizes = entries(token("--webg-glass-sizes"));
     const repeats = entries(token("--webg-glass-repeats"));
     check('glass layer lists stay in step with the four specular radials',
-      pools === 4 && sizes === 7 && repeats === 7,
+      pools === 4 && sizes === 8 && repeats === 8,
       pools + ' pools / ' + sizes + ' sizes / ' + repeats + ' repeats');
   }
 }
@@ -1409,6 +1409,57 @@ setTimeout(async () => {
         }
       }
     }
+    // ── Pointer highlight: rim glint + the toggle-off lifecycle ───────────
+    // The glint is edge-bound (6px top band + 4px bounce, positioned by the
+    // pointer's x); unchecking must tear down listeners AND the inline
+    // property unconditionally (the desync class the old !pointerBound
+    // guard left open), and the move handler self-guards on the setting.
+    {
+      let ptrToggle = null;
+      (function findPointerToggle(node) {
+        if (ptrToggle || !node || typeof node !== 'object') return;
+        const isPtrLabel = node.type === 'label' && node.props && typeof node.props.title === 'string' &&
+          node.props.title.includes('贴边');
+        if (isPtrLabel) {
+          const inp = (node.children || []).find((c) => c && c.type === 'input' && c.props && c.props.type === 'checkbox');
+          if (inp) { ptrToggle = inp; return; }
+        }
+        if (Array.isArray(node.children)) node.children.forEach(findPointerToggle);
+      })(tree);
+      check('pointer toggle located by its label title', Boolean(ptrToggle));
+      if (ptrToggle) {
+        ptrToggle.props.onChange();
+        await new Promise((r) => setTimeout(r, 20));
+        check('pointer toggle flips the persisted setting',
+          JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']).pointerLight === true);
+        composerFixture.getBoundingClientRect = () => ({ left: 0, top: 0, width: 720, height: 116 });
+        documentMock._listeners.pointermove({ clientX: 360, clientY: 20, target: { closest: () => composerFixture } });
+        const glint1 = composerFixture.style._props['--webg-pointer-gloss'] || '';
+        check('pointer move paints an edge-bound glint (6px top band at x%)',
+          glint1.includes('6px') && glint1.includes('at 50.0% 0px') && glint1.includes('* 0.45 * 0.897'),
+          glint1.slice(0, 90));
+        documentMock._listeners.pointermove({ clientX: 180, clientY: 80, target: { closest: () => composerFixture } });
+        const glint2 = composerFixture.style._props['--webg-pointer-gloss'] || '';
+        check('glint follows the pointer (x tracks, dims as it sinks)',
+          glint2.includes('at 25.0% 0px') && glint2.includes('* 0.45 * 0.586'),
+          glint2.slice(0, 90));
+        const savedMove = documentMock._listeners.pointermove;
+        ptrToggle.props.onChange();
+        await new Promise((r) => setTimeout(r, 20));
+        check('unchecking flips the setting off',
+          JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']).pointerLight === false);
+        check('unchecking removes the inline glint',
+          composerFixture.style._props['--webg-pointer-gloss'] === undefined);
+        check('unchecking unbinds the document listeners',
+          !documentMock._listeners.pointermove);
+        if (savedMove) {
+          savedMove({ clientX: 90, clientY: 30, target: { closest: () => composerFixture } });
+          check('a late move after unbind paints nothing (self-guard)',
+            composerFixture.style._props['--webg-pointer-gloss'] === undefined);
+        }
+      }
+    }
+
     // ── i18n: default UI is Chinese; switching to English re-renders. ──
     const langSelect = collectSelects(tree).find((s) =>
       String(s.props.className || '').includes('webg-lang-select'));
