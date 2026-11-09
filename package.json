@@ -1,6 +1,6 @@
 {
   "name": "wallpaper-engine-dsh",
-  "version": "2.3.14",
+  "version": "2.3.15",
   "description": "Wallpaper Engine library as the DSH web GUI background - video/web wallpapers, rotation lists, search, resource monitor, bilingual UI.",
   "type": "module",
   "main": "lib/index.js",
