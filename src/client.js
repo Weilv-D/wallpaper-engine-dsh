@@ -3803,6 +3803,18 @@ const CSS = `
     background: var(--dsw-alias-markdown-code-block) !important;
   }
 
+  /* The request-boundary bead punches a 2px ring out of its rail with the page
+     colour (box-shadow 0 0 0 2px var(--dsw-alias-bg-layer-1)); the ring exists
+     to give the 5px dot clearance from the wire. The page has no colour now, so
+     the ring can only paint "the wallpaper twice" — with the token transparent
+     it is already gone, and the bead simply sits on the wire. Keep the geometry
+     explicitly transparent instead of leaving it to the token: if layer-1 is
+     ever re-pointed to something opaque, an implicit ring would come back as a
+     dark halo around the bead. */
+  body[${ACTIVE_ATTR}] div[data-conversation-composer-overlay]:has([data-trajectory-scroll]) [class*="_requestBoundaryControl"]::before {
+    box-shadow: 0 0 0 2px transparent;
+  }
+
   /* Bottom workbench dock (dsh-better-sidebar's editor/terminal panel).
      Direction (user decision, 2026-11-06): LIGHT glass, not raw. The old
      "directly transparent" version made a half-screen slab read as a hole,

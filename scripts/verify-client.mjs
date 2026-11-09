@@ -490,6 +490,34 @@ check('nav icon swapped in place on the settings row',
       styleCss.includes('@media (prefers-reduced-transparency: reduce)'),
     'body/bevel/elevation/tier/lens/contrast/transparency markers');
 
+  // Trajectory ledger (会话「轨迹」页). The host paints that whole view with a
+  // PANEL token, so the wallpaper never reached it and the tab read as a flat
+  // #232324 slab. The plugin scopes the token to transparent inside the view
+  // and paints nothing back — the page has to stay as bare as the chat page.
+  // Four markers are the contract: the scope itself, the code ground that must
+  // survive the transparency, the two control fills that token was also
+  // feeding, and the request-boundary ring that must not come back as an
+  // opaque halo.
+  {
+    const scope = 'body[data-webg-wallpaper] div[data-conversation-composer-overlay]:has([data-trajectory-scroll])';
+    check('trajectory ledger: panel token transparent inside the scoped view',
+      styleCss.includes(scope) &&
+        styleCss.includes('--dsw-alias-bg-layer-1: transparent') &&
+        // No density multiplier on the page: a body tint here is the grey slab
+        // this surface exists to remove, so its absence is part of the contract.
+        !styleCss.includes('--webg-k: 1.2'));
+    check('trajectory ledger: code ground and control fills survive the transparency',
+      styleCss.includes(scope + ' [class*="_programSource"]') &&
+        styleCss.includes('background: var(--dsw-alias-markdown-code-block) !important') &&
+        styleCss.includes(scope + ' [class*="_controlThumb"]') &&
+        styleCss.includes('label-primary) 92%') &&
+        styleCss.includes(scope + ' [class*="_search"]:focus-within') &&
+        styleCss.includes('label-primary) 7%'));
+    check('trajectory ledger: request-boundary ring pinned transparent',
+      styleCss.includes(scope + ' [class*="_requestBoundaryControl"]::before') &&
+        styleCss.includes('box-shadow: 0 0 0 2px transparent'));
+  }
+
   // Layer-count guard. --webg-glass-layers expands --webg-spec-gloss into FOUR
   // radials and --webg-pointer-gloss into TWO (top band + bottom bounce), so
   // the resolved stack is veil + 4 pools + gloss + pointer = 8 layers, none of
