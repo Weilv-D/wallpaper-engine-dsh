@@ -9,9 +9,9 @@
  *   - style tag lifecycle (injected on apply, REMOVED on dispose)
  *   - wallpaper + scrim layers under <body>, body attribute, CSS variables
  *   - web wallpapers get a sandboxed iframe (allow-scripts only)
- *   - web wallpapers keep crop-adjust but not the object-fit select
- *   - scene wallpapers with a preview render as a static <img>
- *   - scene wallpapers without a preview stay unselectable
+ *   - web wallpapers keep the crop-adjust overlay AND the fit select
+ *     ("free" drives the crop transforms on an iframe too)
+ *   - scene/application wallpapers are filtered out host-side and never render
  *   - refresh does NOT remount the playing wallpaper (token churn tolerated)
  *   - crossfade keeps two layers until the leave timer settles
  *   - clearing fades out gracefully (scrim outlives the layer until the fade
@@ -93,6 +93,34 @@ function makeEl(tag) {
         el._parent = null;
       }
     },
+    get parentNode() { return el._parent || null; },
+    removeChild(c) {
+      const i = el.children.indexOf(c);
+      if (i >= 0) el.children.splice(i, 1);
+      c._parent = null;
+      return c;
+    },
+    replaceWith(node) {
+      const p = el._parent;
+      if (!p) return;
+      const i = p.children.indexOf(el);
+      if (i >= 0) p.children[i] = node;
+      node._parent = p;
+      el._parent = null;
+    },
+    get firstChild() { return el.children[0] || null; },
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 100, height: 100 }),
+    get innerHTML() { return el._innerHTML || ''; },
+    set innerHTML(v) {
+      el._innerHTML = String(v);
+      el.children.length = 0;
+      const m = /^\s*<([a-zA-Z]+)/.exec(el._innerHTML);
+      if (m) {
+        const child = makeEl(m[1]);
+        child._parent = el;
+        el.children.push(child);
+      }
+    },
     // Namespace-blind like the rest of the mock: the lens only reads back
     // the plain attributes map.
     setAttributeNS(_ns, k, v) { el.attributes[k] = String(v); },
@@ -151,6 +179,24 @@ composerFixture.dataset.composerCard = '';
 composerFixture.clientWidth = 720;
 composerFixture.clientHeight = 116;
 bodyEl.appendChild(composerFixture);
+
+// Plugin-page sticky bar fixture: syncHeaderWindow parks a clipped clone of
+// the live media inside this bar (video → a second decoder; web → the
+// preview still). Without it the header-window code path never runs here.
+const pageBarFixture = makeEl('div');
+pageBarFixture._classes = new Set(['settings_pageBar']);
+pageBarFixture.dataset.natural = '';
+pageBarFixture.getBoundingClientRect = () => ({ left: 0, top: 0, width: 1280, height: 64 });
+bodyEl.appendChild(pageBarFixture);
+
+// Settings-nav row fixture: styleNavIcon swaps the default gear SVG for the
+// plugin glyph on rows whose label text matches the plugin's nav label.
+const navGear = makeEl('svg');
+const navRow = makeEl('button');
+navRow._classes = new Set(['settings_navCell']);
+navRow.textContent = '壁纸背景';
+navRow.appendChild(navGear);
+bodyEl.appendChild(navRow);
 const documentMock = {
   createElement: (t) => makeEl(t),
   // The lens defs tree is built with the SVG-namespaced factory; the mock
@@ -162,6 +208,7 @@ const documentMock = {
     if (sel.startsWith('style')) {
       return headEl.children.find((n) => n.tagName === 'STYLE') || null;
     }
+    if (typeof sel === 'string' && sel.includes('_pageBar')) return pageBarFixture;
     return bodyEl.querySelector(sel);
   },
   querySelectorAll: (sel) => bodyEl.querySelectorAll(sel),
@@ -189,6 +236,16 @@ function drainShortTimers() {
 // gate drops the lens without a second module boot.
 const CHROMIUM_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 Electron/37.0.0 DSH/0.2.1';
 const navigatorMock = { userAgent: CHROMIUM_UA, language: 'zh-CN' };
+// Minimal MutationObserver: the client uses it only to trigger re-sweeps and
+// never inspects records synchronously. The harness delivers no records, so
+// binding one lets the apply-time initial sweep (styleNavIcon) run — the
+// lens watcher binds the same mock and stays silent, which is fine: scans
+// also run from applyEffects.
+class MutationObserverMock {
+  constructor(cb) { this._cb = cb; }
+  observe() {}
+  disconnect() {}
+}
 const windowMock = {
   __ModuleLoader__: null, // installed below
   matchMedia: () => ({ matches: false }),
@@ -266,6 +323,7 @@ const sandbox = {
   localStorage: localStorageMock,
   fetch: fetchMock,
   navigator: navigatorMock,
+  MutationObserver: MutationObserverMock,
 };
 vm.createContext(sandbox);
 new vm.Script(code, { filename: 'client.js' }).runInContext(sandbox);
@@ -346,6 +404,12 @@ check('registers its own settings.section (not a row inside General)',
   registrations.some((r) => r.key === 'settings.section' && r.id === 'we-background'),
   JSON.stringify(registrations));
 check('style tag injected on apply', headEl.children.some((n) => n.tagName === 'STYLE'));
+// styleNavIcon swaps the default gear SVG for the plugin glyph in place —
+// dataset-guarded, the gear detaches, an svg (the plugin one) remains.
+check('nav icon swapped in place on the settings row',
+  navRow.dataset.webgNavIcon === '1' && navGear._parent === null &&
+    Boolean(navRow.querySelector('svg')) && navRow.querySelector('svg') !== navGear,
+  JSON.stringify([navRow.dataset.webgNavIcon, String(navGear._parent)]));
 // The shell's brand-primary-invert aliases brand-primary itself (no
 // contrast) — anything on a brand fill must take its colour from the
 // inverted label ramp instead, or buttons render as blank patches.
@@ -427,8 +491,9 @@ check('style tag injected on apply', headEl.children.some((n) => n.tagName === '
     'body/bevel/elevation/tier/lens/contrast/transparency markers');
 
   // Layer-count guard. --webg-glass-layers expands --webg-spec-gloss into FOUR
-  // radials, so the resolved stack is veil + 4 pools + gloss + sheen + pointer
-  // = 7 layers, none of them tiled. A sizes/repeats list shorter than the stack
+  // radials and --webg-pointer-gloss into TWO (top band + bottom bounce), so
+  // the resolved stack is veil + 4 pools + gloss + pointer = 8 layers, none of
+  // them tiled. A sizes/repeats list shorter than the stack
   // cycles from the start and tiles one gradient — the patchy-squares
   // regression this check pins down.
   {
@@ -484,6 +549,22 @@ setTimeout(async () => {
   check('scrim mounted', Boolean(documentMock.getElementById('wallpaper-engine-dsh-scrim')));
   check('body active attribute set', bodyEl.attributes['data-webg-wallpaper'] === 'on');
 
+  // Header wallpaper window: the sticky-bar fixture lets syncHeaderWindow
+  // park a clipped clone of the live media inside the bar — a second muted
+  // video decoder for a video wallpaper, the preview still for a web one —
+  // plus the veil strip so the bar pixel-matches the wallpaper around it.
+  const barEl = documentMock.querySelector('[class*="_pageBar"][data-natural]');
+  check('plugin-page bar fixture is visible to the client', Boolean(barEl));
+  const headerHost = barEl && barEl.children.find((c) => c._classes && c._classes.has('webg-header-window'));
+  check('header wallpaper window mounts inside the bar', Boolean(headerHost));
+  const headerFrame = headerHost && headerHost.children.find((c) => c._classes && c._classes.has('webg-header-frame'));
+  check('header frame clones the live video (muted loop second decoder)',
+    Boolean(headerFrame && headerFrame.children[0] && headerFrame.children[0].tagName === 'VIDEO' &&
+      headerFrame.children[0].muted && headerFrame.children[0].loop),
+    headerFrame && headerFrame.children[0] && headerFrame.children[0].tagName);
+  check('header window carries the scrim veil strip',
+    Boolean(headerHost && headerHost.children.some((c) => c._classes && c._classes.has('webg-header-veil'))));
+
   const props = bodyEl.style._props;
   // The veil OPPOSES the text colour: light theme (dark text) veils WHITE,
   // dark theme (light text) veils BLACK — readable over any wallpaper.
@@ -530,6 +611,11 @@ setTimeout(async () => {
     rotationTimer.fn();
     check('rotation advanced to web wallpaper b',
       JSON.parse(localStorageMock._store['wallpaper-engine-dsh:selection']).id === 'b');
+    // triggerGlassWake fired on the a→b switch: the rim writes swollen
+    // (+0.22 over the 0.830 no-sample base) until the 450ms relax lands.
+    check('wallpaper switch swells the rim for one wake beat',
+      bodyEl.style._props['--webg-rim'] === '1.050',
+      bodyEl.style._props['--webg-rim']);
 
     const layers = documentMock.querySelectorAll('.webg-layer');
     check('crossfade keeps two layers mid-switch', layers.length === 2, layers.length);
@@ -544,7 +630,20 @@ setTimeout(async () => {
 
         drainShortTimers(); // fires the leave timer AND any glass-wake relax
     check('leaving layer removed after crossfade', documentMock.querySelectorAll('.webg-layer').length === 1);
+    check('wake relax restores the base rim',
+      bodyEl.style._props['--webg-rim'] === '0.830',
+      bodyEl.style._props['--webg-rim']);
 
+    {
+      // A web wallpaper's pixels are unreadable in the sandboxed iframe, so
+      // the header clone swaps to the preview still for the same strip.
+      const bar = documentMock.querySelector('[class*="_pageBar"][data-natural]');
+      const host = bar && bar.children.find((c) => c._classes && c._classes.has('webg-header-window'));
+      const frame = host && host.children.find((c) => c._classes && c._classes.has('webg-header-frame'));
+      check('web wallpaper swaps the header clone to the preview still',
+        Boolean(frame && frame.children[0] && frame.children[0].tagName === 'IMG'),
+        frame && frame.children[0] && frame.children[0].tagName);
+    }
     const wrapTimer = [...timers].reverse().find((t) => !t.cleared && t.ms === 300000);
     if (wrapTimer) {
       wrapTimer.fn();
@@ -1496,6 +1595,9 @@ setTimeout(async () => {
   check('lens gate removed on dispose', bodyEl.attributes['data-webg-lens'] === undefined);
   check('all layers removed on dispose', documentMock.querySelectorAll('.webg-layer').length === 0);
   check('scrim removed on dispose', !documentMock.getElementById('wallpaper-engine-dsh-scrim'));
+  const barAfterDispose = documentMock.querySelector('[class*="_pageBar"][data-natural]');
+  check('header wallpaper window removed on dispose',
+    !barAfterDispose.children.some((c) => c._classes && c._classes.has('webg-header-window')));
   check('body attribute removed on dispose', bodyEl.attributes['data-webg-wallpaper'] === undefined);
   check('css vars cleared on dispose', Object.keys(bodyEl.style._props).length === 0);
   check('rotation timer cleared on dispose', !pendingRotation || pendingRotation.cleared);

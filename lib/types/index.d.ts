@@ -13,6 +13,8 @@ export interface WallpaperSummary {
   title: string;
   type: 'video' | 'web';
   playable: boolean;
+  /** Identity of the media bytes ("size:mtimeMs"); null when stat failed. */
+  fingerprint: string | null;
   media: string | null;
   preview: string | null;
 }

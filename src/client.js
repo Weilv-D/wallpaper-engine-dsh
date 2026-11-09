@@ -19,8 +19,9 @@
  *   5. Rotation lists (轮播列表): user-defined groups with per-list interval
  *      and order, persisted in localStorage; first playable WE playlist is
  *      imported on first run.
- *   6. Resource monitor: FPS readout + low-FPS hint, auto-pause when the
- *      page is hidden or the battery is low (both toggleable).
+ *   6. Resource monitor: FPS readout + low-FPS hint; auto-pause on hidden
+ *      tab / low battery (both toggleable) pauses VIDEO wallpapers — a web
+ *      wallpaper's sandboxed iframe has no pause channel and keeps running.
  *   7. Bilingual UI (中文/English): follows the DSH shell's Language setting
  *      (locale service + locale/change event), with a manual override that
  *      persists; falls back to the browser language.
@@ -316,7 +317,10 @@ function readRotationGroups(raw, baseName) {
       interval: clampNum(g.interval, 1, 1440, DEFAULTS.rotationInterval),
       order: g.order === "random" ? "random" : "sequence",
       wallpaperIds: Array.isArray(g.wallpaperIds)
-        ? g.wallpaperIds.filter((x) => typeof x === "string" && x)
+        // Dedupe like saveEditingGroup: hand-edited storage can carry
+        // duplicates, which would double-count the list and burn a rotation
+        // tick re-selecting the wallpaper that is already showing.
+        ? [...new Set(g.wallpaperIds.filter((x) => typeof x === "string" && x))]
         : [],
     });
   }
@@ -601,12 +605,16 @@ async function loadInventory(forceRefresh) {
   // grid or rotation from isPlayable().
   releaseUnverifiableVerdicts();
 
-  // Seed a first rotation group from a playable WE playlist (once only, so
-  // deleting every list stays respected across reloads).
+  // Seed a first rotation group from a playable WE playlist. The one-time
+  // chance is consumed by a SUCCESSFUL seed only: a first load that finds no
+  // usable playlist yet (fresh WE install, playlists imported later) must
+  // keep retrying, while a user deleting every seeded list stays respected
+  // because the success persisted rotationSeeded=true.
   if (!selection.rotationGroups.length && !selection.rotationSeeded) {
-    selection.rotationSeeded = true;
-    seedGroupsFromPlaylists();
-    persistSelection();
+    if (seedGroupsFromPlaylists()) {
+      selection.rotationSeeded = true;
+      persistSelection();
+    }
   }
   if (selection.rotationGroupId && !activeRotationGroup()) {
     selection.rotationGroupId = "";
@@ -752,7 +760,13 @@ function saveEditingGroup() {
       : [],
   };
   if (idx >= 0) selection.rotationGroups[idx] = cleaned;
-  else selection.rotationGroups.push(cleaned);
+  else {
+    selection.rotationGroups.push(cleaned);
+    // A user-authored list consumes the one-time auto-seed: once the user has
+    // made their own list choice, a later reload must not surprise-import a
+    // WE playlist — including after they delete their list again.
+    selection.rotationSeeded = true;
+  }
   selection.rotationGroupId = cleaned.id;
   selection.editing = null;
   if (selection.rotationEnabled && !rotationCandidates().some((w) => w.id === selection.id)) {
@@ -1080,7 +1094,12 @@ function attachZeroFrameDetector(media, sel) {
 // the retry kept the same element.
 function attachFirstFrameWatchdog(media, sel) {
   const arm = () => {
-    window.setTimeout(() => {
+    // Ride the tracked scheduler like every other timer: dispose cancels the
+    // pending grace window with the rest of pendingTimers, and a host without
+    // a timer facility never arms at all (the error and zero-frame paths
+    // still feed the ladder).
+    if (typeof window === "undefined" || typeof window.setTimeout !== "function") return;
+    schedule(() => {
       const layer = document.getElementById(LAYER_ID);
       if (!layer || layer.querySelector("video") !== media) return;
       // Classify by the error the element actually reports: a network-shaped
@@ -2669,9 +2688,14 @@ function onGroupChange(e) {
   selection.rotationGroupId = e.target.value;
   if (selection.rotationEnabled) {
     const first = rotationCandidates()[0];
-    if (first) applySelection(first.id);
-    else applySelection("");
-    return;
+    if (first) {
+      applySelection(first.id);
+      return;
+    }
+    // The switched-to list has nothing usable: keep the current wallpaper
+    // playing and stop rotation instead of clearing the screen — the same
+    // decision saveEditingGroup makes for an emptied list.
+    selection.rotationEnabled = false;
   }
   persistSelection();
   syncRotationTimer();
@@ -3833,10 +3857,12 @@ const CSS = `
 
   /* Windows desktop: the window-controls strip is an opaque host
      overlay (titleBarOverlay colour, fed from the renderer-measured
-     palette). Blend the wallpaper up into it with a short fade from
-     the overlay's own colour, scoped
+     palette). Blend the wallpaper up into it with a short fade, scoped
      to the desktop marker html[data-windows-titlebar] (absent in
-     browsers) and off in fullscreen. The fade is dark, always. */
+     browsers) and off in fullscreen. The fade base is a FIXED dark
+     approximation — the host exposes the measured overlay colour as no
+     CSS token yet, so this cannot follow it; if a token ships, feed this
+     variable from it. The fade is dark, always. */
   body { --webg-titlebar-fill: #1b1b1c; }
   html[data-windows-titlebar]:not([data-fullscreen]) body[${ACTIVE_ATTR}] .webg-scrim::before {
     content: ""; position: absolute; top: 0; left: 0; right: 0;
