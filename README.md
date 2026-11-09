@@ -47,6 +47,7 @@ A DSH bundle that turns the local **Wallpaper Engine** library into a living bac
 - Tooltips take the body tint and the bevel, with no backdrop capture.
 - The shell's other floating panels consume the `--dsw-menu-backdrop-filter` token, re-pointed at the same filter chains; ds-harness-remote's `dshRemotePage` gets the dialog treatment; dsh-better-sidebar's bottom panel is T2 light glass.
 - Full-page settings headers (the plugin page's sticky bar) stay transparent: a clipped copy of the live wallpaper — a "window" — is parked inside the bar, above the scrolled rows and below the title/tabs, so content no longer shows through while the wallpaper still does.
+- A conversation's 轨迹 (Trajectory) tab shows the wallpaper across the whole page. The host paints that view with a panel token rather than the page token, so the plugin turns that token transparent inside the view only; the page adds no body tint and no blur, and ends up with exactly what the chat page has — the wallpaper and the global veil. Toolbar, split, table, details and timeline overview follow the token; the Program source block keeps the code ground it shares with other code blocks.
 
 ### Manual framing
 

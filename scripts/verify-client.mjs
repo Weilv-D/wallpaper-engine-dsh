@@ -494,7 +494,7 @@ check('nav icon swapped in place on the settings row',
   // PANEL token, so the wallpaper never reached it and the tab read as a flat
   // #232324 slab. The plugin scopes the token to transparent inside the view
   // and paints nothing back — the page has to stay as bare as the chat page.
-  // Four markers are the contract: the scope itself, the code ground that must
+  // Four parts make the contract: the scope itself, the code ground that must
   // survive the transparency, the two control fills that token was also
   // feeding, and the request-boundary ring that must not come back as an
   // opaque halo.
