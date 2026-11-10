@@ -48,6 +48,7 @@ A DSH bundle that turns the local **Wallpaper Engine** library into a living bac
 - The shell's other floating panels consume the `--dsw-menu-backdrop-filter` token, re-pointed at the same filter chains; ds-harness-remote's `dshRemotePage` gets the dialog treatment; dsh-better-sidebar's bottom panel is T2 light glass.
 - Full-page settings headers (the plugin page's sticky bar) stay transparent: a clipped copy of the live wallpaper — a "window" — is parked inside the bar, above the scrolled rows and below the title/tabs, so content no longer shows through while the wallpaper still does.
 - A conversation's 轨迹 (Trajectory) tab shows the wallpaper across the whole page. The host paints that view with a panel token rather than the page token, so the plugin turns that token transparent inside the view only; the page adds no body tint and no blur, and ends up with exactly what the chat page has — the wallpaper and the global veil. Toolbar, split, table, details and timeline overview follow the token; the Program source block keeps the code ground it shares with other code blocks.
+- The right column's "Start" page shows the wallpaper behind its door capsules. Those capsules — the shell's own and the terminal provider's card — paint the panel token as their fill, so the plugin turns that token transparent on their shared host attribute (`data-sidebar-right-guide-entry`); the host's `.5px` border and hover/expanded fills stay, so each door keeps an outline while the global veil stays the one knob for a too-loud wallpaper.
 
 ### Manual framing
 

@@ -3815,6 +3815,27 @@ const CSS = `
     box-shadow: 0 0 0 2px transparent;
   }
 
+  /* Right column, "开始" page (the right sidebar's guide tab, what a fresh
+     column shows before a page is picked). The column itself is a page: its
+     ground is the page token, which the active rules already make transparent,
+     so the wallpaper shows between the door capsules. But each capsule paints
+     the panel token as its own fill — same border, same radius, same token as
+     the trajectory page's ground — so on a wallpaper they read as a stack of
+     black pills.
+
+     The capsules share one host attribute, data-sidebar-right-guide-entry: the
+     shell's own doors and the terminal provider's card both carry it, and no
+     other package in the install paints a guide capsule (checked over the whole
+     app bundle). Scope the token to that attribute rather than painting the
+     capsules: the host keeps the .5px border and the hover/expanded fills,
+     which read on the wallpaper, and a new contributor inherits the same
+     decision. This is exactly the token that also fills text inputs, table
+     headers and previews across the shell — which is why it is never
+     re-pointed globally, only inside a surface that is supposed to be bare. */
+  body[${ACTIVE_ATTR}] [data-sidebar-right-guide-entry] {
+    --dsw-alias-bg-layer-1: transparent;
+  }
+
   /* Bottom workbench dock (dsh-better-sidebar's editor/terminal panel).
      Direction (user decision, 2026-11-06): LIGHT glass, not raw. The old
      "directly transparent" version made a half-screen slab read as a hole,

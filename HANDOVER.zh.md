@@ -227,6 +227,7 @@
 | 远程页 | `.dshRemotePage` | T3 | 无 | `::before` |
 | 消息气泡 | `[class*="_bubble"]` | — | 无 | 体色 + 边光（内容层，不做背景采样） |
 | 轨迹页账本 | `div[data-conversation-composer-overlay]:has([data-trajectory-scroll])` | — | 无 | 仅令牌作用域（`--dsw-alias-bg-layer-1: transparent`），页面不再补材质 |
+| 右侧栏「开始」页胶囊 | `[data-sidebar-right-guide-entry]` | — | 无 | 仅令牌作用域；胶囊保留宿主 `.5px` 边框与悬停/展开填充 |
 
 **插件页页头为什么用“壁纸窗口”：** 宿主用 `.pageBar[data-natural]::before` 作为页头的绘制层，背景读 `--dsw-alias-bg-base`；插件把该令牌设为 `transparent` 后，页头全透明，滚过的内容会从吸顶栏里透出来。CSS 没有“透明且遮挡”的解法：`backdrop-filter` 只是把背景重新上色（擦不掉），给滚动容器加 `clip-path` 又会把吸顶栏一起裁掉。因此插件在栏内挂一个窗口：`syncHeaderWindow()` 把当前媒体复制进 `.webg-header-window`（高度取 `--plugin-header-paint-height`，`overflow:hidden`，`z-index:-1`），内部 `.webg-header-frame` 按“视口尺寸、减去栏的偏移”摆放，克隆的 `.webg-media` 与原层共用同一套 `object-fit`/裁剪/镜像/模糊样式，像素位置一致；窗口还复制了原层的画布底色（`.webg-header-frame` 的 `--webg-layer-bg`）、同一张抖动噪点（`::after`）和同色的遮罩（`.webg-header-veil` 读 `--webg-scrim-color`），所以暗化与模糊都随页面壁纸实时变化、逐像素对齐；视频克隆静音循环并每秒对齐 `currentTime`，web 壁纸退回预览图；窗口级 scroll/resize 监听(rAF 合帧)在 bar 未吸顶的滚动段即时重锚定条带，不再依赖 1 Hz 定时器追赶。窗口在栏的堆叠上下文里绘制于滚动行之上、标题与标签之下，宿主的 `::after` 分隔线仍在最上层；无栏或无选中壁纸时移除。
 
@@ -240,6 +241,8 @@
 - **为什么不加 `backdrop-filter`。** 根容器带 `isolation:isolate`（成为 backdrop root，伪元素采到的是空背景），而且它是自己吸顶工具栏和时间轴视口换算的锚点，落滤镜有包含块风险；壁纸太吵就调全局遮罩滑杆，和别的页是同一个旋钮。
 - **为什么不给工具栏补材质。** 工具栏虽然写 `position:sticky`，但它是根容器里的非滚动兄弟节点（纵向滚动只发生在账本的 `[data-trajectory-scroll]` 里），透明后不会有行从它下面滑过去。
 - **定位依据。** 选择器只用宿主的功能性 data 属性（视图根 `data-conversation-composer-overlay`，账本滚动区 `data-trajectory-scroll`），不碰哈希类名；这条契约连同上面三处例外都在 `scripts/verify-client.mjs` 里有对应断言。
+
+**同一条判据的第二次应用：右侧栏「开始」页。** 同一个令牌也铺在右侧栏「开始」页的入口胶囊上——宿主的 `.p2k40q_entry` 与终端提供方的 `-4GESq_entry` 都是「`.5px` 边框 + `--dsl-guide-entry-radius` 圆角 + `background: var(--dsw-alias-bg-layer-1)`」三件套。列本身的底是页面令牌（已透明），于是胶囊成了那列里唯一的实心块；壁纸一亮就是一堆黑色药丸。两处胶囊共用宿主属性 `data-sidebar-right-guide-entry`（清点过整个 app 包：只有这两个包产出胶囊，且都带该属性），插件把令牌作用域在这个属性上，边框与悬停/展开填充照旧。仍然不全局改的理由与本段第一条相同：清点显示 `layer-1` 在二十来个包里几乎全是控件与面板填充（输入框、表头、预览、提示），那才是不能挖的洞。
 
 ### 4.6 无障碍与平台
 
@@ -294,6 +297,7 @@ npm run verify     # 在 vm + DOM mock 中加载产物并断言行为
 | 外壳令牌重命名 | 玻璃读 `--dsw-*` 令牌 | 重构后会退化为普通半透明；README 已列为限制 |
 | `.dshRemotePage` | 依赖约定类名，不是正式契约 | 远程页改类名会失去材质 |
 | 轨迹页账本 | 靠宿主 data 属性定位（`data-conversation-composer-overlay` + `data-trajectory-scroll`），不是版式契约 | 宿主改这两个属性的落点、或给轨迹页加自带输入框（根上不再有 `data-conversation-composer-overlay`）就失配；失配时退回原来的整块 `#232324`，不会破版 |
+| 右侧栏开始页胶囊 | 靠宿主属性 `[data-sidebar-right-guide-entry]` 定位，不是版式契约 | 属性改名、或新贡献者不用该属性自造胶囊时，胶囊退回实心面板色（宿主外观），不破版 |
 | 轨迹页边界圆点 | 圆点用 2px 页面色环「截断」轨道（`box-shadow` 读 `layer-1`） | 页面透明后环无色，5px 点与 0.5px 轨道相接；插件把环显式钉成透明，避免 `layer-1` 将来变回实色时多出一圈暗晕 |
 | 轨迹页控件与代码底 | 靠宿主类名 `[class*="_controlThumb"]`、`[class*="_search"]`、`[class*="_programSource"]` 定位 | 宿主改类名后：开关圆钮随令牌透明而消失、搜索聚焦失去底色、程序源码底随令牌透明（代码直接浮在壁纸上）；都只影响该页观感，不破版 |
 | `:has()` | 依赖 Chromium 105+ | DSH Web 与 Electron 桌面都满足；纯 Safari 用户本来也没有透镜 |
@@ -326,6 +330,7 @@ npm run verify     # 在 vm + DOM mock 中加载产物并断言行为
 | 设置弹窗空白 | `backdrop-filter` 的包含块问题；`:has()` 排除规则 |
 | 透镜没效果 | UA、`prefers-reduced-transparency`、`glass > 0`、`data-webg-lens` |
 | 轨迹页仍是整块深灰（或反过来全白） | `body[data-webg-wallpaper]` 在不在；视图根还有没有 `data-conversation-composer-overlay`、滚动区还有没有 `data-trajectory-scroll`；`--dsw-alias-bg-layer-1` 是否被作用域规则覆盖 |
+| 右侧栏「开始」页仍是深色胶囊 | `[data-sidebar-right-guide-entry]` 在不在；该元素背景是否仍读 `--dsw-alias-bg-layer-1` |
 | 发布失败 | 标签/版本一致性、OIDC 权限、Actions 日志 |
 
 ---
