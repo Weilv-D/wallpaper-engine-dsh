@@ -42,7 +42,7 @@ A DSH bundle that turns the local **Wallpaper Engine** library into a living bac
 | T2 | Composer, menus, dock, new-session button | 10px |
 | T3 | Settings dialog, full-page workbenches | 14px |
 
-- One test decides what gets glass: **does it float above content?** Page layers (chat, Trajectory, the right column, settings content) paint nothing and show the wallpaper directly; overlays (composer card, menus and dropdowns, dialogs, the dock, the crop-adjust bar) get glass; tooltips take tint only, with no backdrop capture. Message bubbles are content, not chrome: body and edge light, no blur. Settings cards soften to a translucent token fill.
+- One test decides what gets glass: **does it float above content?** Page layers (chat, Trajectory, the right column, settings content) paint nothing and show the wallpaper directly; overlays (composer card, menus and dropdowns, dialogs, the dock, the crop-adjust bar) get glass; tooltips take tint only, with no backdrop capture. Navigation surfaces *inside* an overlay — the Start page's doors and the dock's empty-state cards — follow the page rule: token only, no material, while the overlay itself keeps its glass. Message bubbles are content, not chrome: body and edge light, no blur. Settings cards soften to a translucent token fill.
 - Menus, dialogs, overlay panels and the dock take their own tier; submenus (`role="menu"`) take T2.
 - Tooltips take the body tint and the bevel, with no backdrop capture.
 - The shell's other floating panels consume the `--dsw-menu-backdrop-filter` token, re-pointed at the same filter chains; ds-harness-remote's `dshRemotePage` gets the dialog treatment; dsh-better-sidebar's bottom panel is T2 light glass.
