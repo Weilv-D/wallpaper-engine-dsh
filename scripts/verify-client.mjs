@@ -529,6 +529,14 @@ check('nav icon swapped in place on the settings row',
   check('right column guide: door capsules lose their panel fill',
     /body\[data-webg-wallpaper\] \[data-sidebar-right-guide\],\s*body\[data-webg-wallpaper\] \[data-sidebar-right-guide-entry\] \{\s*--dsw-alias-bg-layer-1: transparent;/.test(styleCss));
 
+  // Bottom workbench dock (dsh-better-sidebar), empty state: the "open a tab"
+  // cards. Same door test as the Start page — navigation surface inside a glass
+  // dock, so no material of its own. The dock's own fill stays glass, and the
+  // override is scoped to the card class because the same panel token feeds the
+  // dock's inputs and menu shells.
+  check('bottom dock: empty-state cards lose their panel fill',
+    /body\[data-webg-wallpaper\] \[data-dsh-bottom-panel\] \[class\*="_paneCard"\] \{\s*--dsw-alias-bg-layer-1: transparent;/.test(styleCss));
+
   // Layer-count guard. --webg-glass-layers expands --webg-spec-gloss into FOUR
   // radials and --webg-pointer-gloss into TWO (top band + bottom bounce), so
   // the resolved stack is veil + 4 pools + gloss + pointer = 8 layers, none of

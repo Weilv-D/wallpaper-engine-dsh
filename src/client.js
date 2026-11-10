@@ -3868,6 +3868,17 @@ const CSS = `
     background-image: none;
     box-shadow: none;
   }
+  /* Empty state of the same dock: the "open a tab" cards. Third application
+     of one test (see the right column's Start page and the trajectory ledger)
+     — these are navigation surfaces inside the dock, not floating layers of
+     their own, so they carry no material; the dock's glass and the card's own
+     hairline remain. The fill reads --dsw-alias-bg-layer-1, a panel token the
+     dock also uses for its inputs and menu shells, so the override is scoped
+     to the card class instead of the panel. The class suffix survives rebuilds;
+     the hash prefix does not. */
+  body[${ACTIVE_ATTR}] [data-dsh-bottom-panel] [class*="_paneCard"] {
+    --dsw-alias-bg-layer-1: transparent;
+  }
   /* Plugin-page sticky bar. Its own stylesheet paints the bar's layer with a
      ::before whose background is --dsw-alias-bg-base — a token this plugin
      makes transparent so the wallpaper shows. A fill or a backdrop blur would
