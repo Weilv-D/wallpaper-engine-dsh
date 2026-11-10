@@ -521,10 +521,13 @@ check('nav icon swapped in place on the settings row',
   // Right column guide (the right sidebar's "开始" / Start page). Its door
   // capsules — the shell's own and the terminal provider's — paint the panel
   // token as their fill, and the column's page ground is already transparent,
-  // so on a wallpaper they read as a stack of black pills. One shared host
-  // attribute covers every capsule; they keep their border and hover fills.
+  // so on a wallpaper they read as a stack of black pills. The guide container
+  // is the reliable anchor (the "More tools" card is a bare menu-trigger button
+  // with no per-entry attribute), and the entry attribute stays as the second
+  // anchor for capsules rendered outside it. They keep their border and hover
+  // fills.
   check('right column guide: door capsules lose their panel fill',
-    /body\[data-webg-wallpaper\] \[data-sidebar-right-guide-entry\] \{\s*--dsw-alias-bg-layer-1: transparent;/.test(styleCss));
+    /body\[data-webg-wallpaper\] \[data-sidebar-right-guide\],\s*body\[data-webg-wallpaper\] \[data-sidebar-right-guide-entry\] \{\s*--dsw-alias-bg-layer-1: transparent;/.test(styleCss));
 
   // Layer-count guard. --webg-glass-layers expands --webg-spec-gloss into FOUR
   // radials and --webg-pointer-gloss into TWO (top band + bottom bounce), so
